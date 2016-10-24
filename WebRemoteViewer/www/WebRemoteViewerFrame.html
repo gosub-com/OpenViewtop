@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <p id="drawString">Draw string</p>
+    <canvas width="600" height="600" id="canvas">Canvas not available.  Please upgrade your browser.</canvas>
+</body>
+</html>
+
+<script>
+
+    var canvas = document.getElementById('canvas');
+    var ctx = canvas.getContext('2d');
+    var sequence = 1;
+
+    InitializeCanvas();
+
+    function InitializeCanvas()
+    {
+        ctx.fillStyle = '#228';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#fff';
+        ctx.font = '60px sans-serif';
+        ctx.fillText('Loading...', 10, canvas.height / 2 - 15);
+    }
+
+    function loadImage()
+    {
+        var img = new Image();
+        img.onload = function ()
+        {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.drawImage(img, 0, 0);
+
+            ctx.font = '26px sans-serif';
+            ctx.fillStyle = '#88F';
+            ctx.fillText('Frame: ' + sequence, 15, 25);
+            loadImage();
+        };
+        img.onerror = function ()
+        {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = '26px sans-serif';
+            ctx.fillStyle = '#88F';
+            ctx.fillText('Error', 15, 25);
+        };
+        img.src = 'index.wrv?type=image&seq=' + sequence;
+        sequence = sequence + 1;
+    }
+    function loadDrawBuffer()
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function ()
+        {
+            if (this.readyState == 4 && this.status == 200)
+            {
+                if (this.status == 200)
+                {
+                    document.getElementById("drawString").innerHTML = 'Seq ' + sequence + ': ' + xhttp.responseText;
+                    loadDrawBuffer();
+                }
+                else
+                {
+                    document.getElementById("drawString").innerHTML = 'ERROR!';
+                }
+            }
+        };
+        xhttp.open("GET", "index.wrv?type=draw&seq=1", true);
+        xhttp.send();
+    }
+
+    loadImage();
+    loadDrawBuffer();
+
+
+</script>
