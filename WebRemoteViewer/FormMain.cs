@@ -10,7 +10,7 @@ namespace Gosub.WebRemoteViewer
     public partial class FormMain : Form
     {
         FileServer mFileServer;
-        WrvHandler mWrvServer;
+        WrvServer mWrvServer;
         FrameCollector mCollector;
         FrameAnalyzer mAnalyzer;
 
@@ -56,7 +56,7 @@ namespace Gosub.WebRemoteViewer
             try
             {
                 mFileServer = new FileServer("http://localhost:8080/", Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www"));
-                mWrvServer = new WrvHandler();
+                mWrvServer = new WrvServer();
                 mCollector = new FrameCollector();
                 mAnalyzer = new FrameAnalyzer();
                 var wrvServer = mWrvServer; // Do not capture the field, only the local
@@ -96,36 +96,9 @@ namespace Gosub.WebRemoteViewer
 
         private void timerRefresh_Tick(object sender, EventArgs e)
         {
-            if (mFileServer == null)
-            {
-                labelStats.Text = "";
-                return;
-            }
-
-            DateTime t1 = DateTime.Now;
-            Bitmap bm = mCollector.CreateFrame();
-
-            DateTime t2 = DateTime.Now;
-            mAnalyzer.NoCompression = checkNoCompression.Checked;
-            mAnalyzer.SuppressBackgroundCompare = checkSuppressBackgroundCompare.Checked;
-            mAnalyzer.SmartPng = checkSmartPng.Checked;
-
-            Stream image;
-            string draw;
-            mAnalyzer.AnalyzeFrame(bm, out image, out draw);
-            bm.Dispose();
-
-            DateTime t3 = DateTime.Now;
-
-            mWrvServer.SetDraw(image, draw);
-
-            labelStats.Text = "Collect time: " + (t2 - t1).Milliseconds + "\r\n"
-                              + "Analyze time: " + (t3 - t2).Milliseconds + "\r\n"
-                              + "Score time: " + mAnalyzer.ScoreTime.Milliseconds + "\r\n"
-                              + "Create time: " + mAnalyzer.CreateTime.Milliseconds + "\r\n"
-                              + "Compress time: " + mAnalyzer.CompressTime.Milliseconds + "\r\n"
-                              + "Duplicates: " + mAnalyzer.DuplicateBlocks + "\r\n"
-                              + "Hash collisions: " + mAnalyzer.HashCollisionsEver;
+            FrameAnalyzer.NoCompression = checkNoCompression.Checked;
+            FrameAnalyzer.SuppressBackgroundCompare = checkSuppressBackgroundCompare.Checked;
+            FrameAnalyzer.SmartPng = checkSmartPng.Checked;
         }
 
     }

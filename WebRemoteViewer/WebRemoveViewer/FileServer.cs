@@ -108,6 +108,7 @@ namespace Gosub.WebRemoteViewer
         {
             var request = context.Request;
 
+            // Deal with PUT requests later
             if (request.HttpMethod != "GET")
                 throw new RequestException("Invalid HTTP request: " + request.HttpMethod);
 
@@ -125,7 +126,7 @@ namespace Gosub.WebRemoteViewer
             var response = context.Response;
             if (path.Contains("..") || path.Contains(sPrivateFileName))
             {
-                RespondWithErrorMessage(response, "Bad Request", 400);
+                SendError(response, "Bad Request", 400);
                 return;
             }
 
@@ -142,21 +143,31 @@ namespace Gosub.WebRemoteViewer
             {
                 // Send local file back to client
                 var stream = File.OpenRead(path);
+                response.ContentLength64 = stream.Length;
                 stream.CopyTo(response.OutputStream);
                 stream.Close();
                 return;
             }
 
-            RespondWithErrorMessage(response, "File not found", 404);
+            SendError(response, "File not found", 404);
             return;
         }
 
-        public static void RespondWithErrorMessage(HttpListenerResponse response, string message, int statusCode)
+        public static void SendError(HttpListenerResponse response, string message, int statusCode)
         {
-            byte[] messageBytes = UTF8Encoding.UTF8.GetBytes("<html><body>ERROR: " + message + "</body><html>");
+            SendResponse(response, "<html><body>ERROR: " + message + "</body><html>", statusCode);
+        }
+
+        public static void SendResponse(HttpListenerResponse response, string message, int statusCode)
+        {
+            SendResponse(response, UTF8Encoding.UTF8.GetBytes(message), statusCode);
+        }
+
+        public static void SendResponse(HttpListenerResponse response, byte []message, int statusCode)
+        {
             response.StatusCode = statusCode;
-            response.ContentLength64 = messageBytes.Length;
-            response.OutputStream.Write(messageBytes, 0, messageBytes.Length);
+            response.ContentLength64 = message.Length;
+            response.OutputStream.Write(message, 0, message.Length);
         }
 
     }

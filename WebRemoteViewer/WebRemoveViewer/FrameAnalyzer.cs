@@ -29,9 +29,10 @@ namespace Gosub.WebRemoteViewer
         int mHashCollisions;
         int mDuplicateBlocks;
 
-        public bool NoCompression { get; set; }
-        public bool SuppressBackgroundCompare { get; set; }
-        public bool SmartPng { get; set; } = true;
+        // TBD: This is bad, do not make these public static
+        public static bool NoCompression { get; set; }
+        public static bool SuppressBackgroundCompare { get; set; }
+        static public bool SmartPng { get; set; } = true;
 
         public TimeSpan ScoreTime { get { return mScoreTime; } }
         public TimeSpan CreateTime { get { return mCreateTime; } }
@@ -78,16 +79,17 @@ namespace Gosub.WebRemoteViewer
         /// dispose the bitmap when done with it.
         /// NOTE: Throws away the PNG for now (deal with it later)
         /// </summary>
-        public void AnalyzeFrame(Bitmap bm, out Stream stream, out string draw)
+        public void AnalyzeFrame(Bitmap bm, out byte []bytes, out string draw)
         {
             if (NoCompression)
             {
                 mScoreTime = new TimeSpan();
                 mCreateTime = new TimeSpan();
                 var tc = DateTime.Now;
-                stream = new MemoryStream();
+                var ms = new MemoryStream();
                 draw = "No Compression";
-                bm.Save(stream, ImageFormat.Jpeg);
+                bm.Save(ms, ImageFormat.Jpeg);
+                bytes = ms.ToArray();
                 mCompressTime = DateTime.Now - tc;
                 return;
             }
@@ -127,7 +129,9 @@ namespace Gosub.WebRemoteViewer
                 draw = draw.Substring(0, 50) + "...";
 
             draw = "Frame " + mFrameIndex + ": " + draw;
-            stream = jpgStream;
+            bytes = new byte[jpgStream.Length];
+            jpgStream.Position = 0;
+            jpgStream.Read(bytes, 0, bytes.Length);
         }
 
         /// <summary>

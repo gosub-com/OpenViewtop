@@ -4,15 +4,14 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
+using System.Threading;
 
 namespace Gosub.WebRemoteViewer
 {
     class FrameCollector
     {
-
         public Bitmap CreateFrame()
         {
-            DateTime start = DateTime.Now;
             var bm = new Bitmap(Screen.PrimaryScreen.Bounds.Width,
                                 Screen.PrimaryScreen.Bounds.Height, PixelFormat.Format32bppArgb);
             using (Graphics gr = Graphics.FromImage(bm))
