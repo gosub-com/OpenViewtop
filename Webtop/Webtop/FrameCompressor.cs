@@ -1,0 +1,369 @@
+﻿// Copyright (C) 2016 by Jeremy Spiller, all rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+
+namespace Gosub.Webtop
+{
+    /// <summary>
+    /// Analyze a frame.  Look for un-changed sections, solid colors, duplicates,
+    /// and optionally look for PNG compressed blocks.
+    /// </summary>
+    unsafe class FrameCompressor
+    {
+        Bitmap32Bits mBackground;
+
+        int mBlockSize = 16; // Should be a power of two, should be >= 16
+        float mPngCompressionThreshold = 0.7f;
+
+        int mFrameIndex;
+        int mHashCollisions;
+        int mDuplicates;
+        int mBlocksX;
+
+        bool mForceDisableDelta;
+        OutputType mOutput;
+        CompressionType mCompression;
+
+        public int Duplicates {  get { return mDuplicates; } }
+        public int HashCollisionsEver {  get { return mHashCollisions; } }
+
+        // Convert block index to X and Y coordinates
+        int ItoX(int i) { return (i % mBlocksX) * mBlockSize; }
+        int ItoY(int i) { return (i / mBlocksX) * mBlockSize; }
+
+        public enum CompressionType
+        {
+            Jpg,
+            Png,
+            SmartPng // TBD: Not finished
+        }
+
+        public enum OutputType
+        {
+            Normal,
+            DisableDelta,
+            FullFrameJpg,
+            FullFramePng,
+            CompressionMap,
+            CompressionDeltaMap,
+            HideJpg,
+            HidePng
+        }
+
+        internal struct Block
+        {
+            public short Index;
+            public Score Score;
+            public Block(int index, Score score) { Index = (short)index;  Score = score; }
+            public override string ToString() { return "" + Index + "=" + Score; }
+        }
+
+        internal enum Score : short
+        {
+            None = 0,
+            Solid = 1,
+            Duplicate = 2,
+            Png = 4,
+            Jpg = 8
+        }
+
+        public OutputType Output
+        {
+            get { return mOutput; }
+            set
+            {
+                if (value != mOutput && value == OutputType.Normal)
+                    mForceDisableDelta = true;
+                mOutput = value;
+            }
+        }
+
+        public CompressionType Compression
+        {
+            get { return mCompression; }
+            set
+            {
+                if (value != mCompression)
+                    mForceDisableDelta = true;
+                mCompression = value;
+            }
+        }
+
+        /// <summary>
+        /// Analyze a bitmap, and keep a copy as the new background.  If the bitmap is not
+        /// the same size as the previous one, a new comparison is made.  You must
+        /// dispose the bitmap when done with it.
+        /// </summary>
+        public void Compress(Bitmap frame, out byte []bytes, out string draw)
+        {
+            // Generate full frame JPG or PNG (debugging output)
+            if (mOutput == OutputType.FullFrameJpg || mOutput == OutputType.FullFramePng)
+            {
+                GenerateFullFrame((Bitmap)frame.Clone(),
+                                  mOutput == OutputType.FullFrameJpg ? ImageFormat.Jpeg : ImageFormat.Png,
+                                  out bytes, out draw);
+                return;
+            }
+
+            // Force full frame analysis if requested
+            bool disableDelta = mForceDisableDelta 
+                                || Output == OutputType.DisableDelta 
+                                || Output == OutputType.CompressionMap 
+                                || Output == OutputType.HideJpg 
+                                || Output == OutputType.HidePng;
+            mForceDisableDelta = false;
+            
+            // Optionally create background if it doesn't exist, or the size changed
+            if (mBackground == null || mBackground.Width != frame.Width || mBackground.Height != frame.Height)
+            {
+                // New background, do not compare with previous
+                disableDelta = true;
+                if (mBackground != null)
+                    mBackground.Dispose();
+                mBackground = new Bitmap32Bits(frame.Width, frame.Height);
+            }
+
+            // Number of blocks visible (even if partially visible)
+            mBlocksX = (frame.Width + mBlockSize - 1) / mBlockSize;
+
+            // Score bitmap
+            mFrameIndex++;
+            var frameBits = new Bitmap32Bits(frame, ImageLockMode.ReadOnly);
+            List<Block> blocks;
+            Dictionary<int, int> duplicates;
+            ScoreFrame(frameBits, disableDelta, out blocks, out duplicates);
+
+            // Build the bitmap (TBD: smartPng)
+            Bitmap jpg;
+            BuildBitmap(frameBits, blocks, duplicates, Score.Solid | Score.Duplicate | Score.Jpg | Score.Png, out jpg, out draw);
+            frameBits.Dispose();
+
+            // Compress bitmap (TBD: smartPng)
+            var bmStream = new MemoryStream();
+            jpg.Save(bmStream, mCompression == CompressionType.Png ? ImageFormat.Png : ImageFormat.Jpeg);
+            jpg.Dispose();
+            bytes = bmStream.ToArray();
+
+            // Optionally create compression maps and other debug output
+            if (mOutput == OutputType.CompressionMap || mOutput == OutputType.CompressionDeltaMap)
+            {
+                CopyDuplicateAttributesForDebug(blocks, duplicates);
+                var map = GenerateCompressionMap(frame.Width, frame.Height, blocks);
+                GenerateFullFrame(map, ImageFormat.Png, out bytes, out draw);
+            }
+            else if (mOutput == OutputType.HideJpg || mOutput == OutputType.HidePng)
+            {
+                CopyDuplicateAttributesForDebug(blocks, duplicates);
+                var map = GenerateHideMap(frame, blocks, mOutput == OutputType.HideJpg ? Score.Jpg : Score.Png);
+                GenerateFullFrame(map, ImageFormat.Jpeg, out bytes, out draw);
+            }
+        }
+
+        /// <summary>
+        /// Score a frame, creating a list of blocks
+        /// </summary>
+        private void ScoreFrame(Bitmap32Bits frame, 
+                                bool disableDelta, 
+                                out List<Block> blocks, 
+                                out Dictionary<int, int> duplicates)
+        {
+            blocks = new List<Block>();
+            duplicates = new Dictionary<int, int>();
+
+            var sourceIndex = -1;
+            var duplicateHashToIndex = new Dictionary<int, int>();
+            for (int y = 0; y < frame.Height; y += mBlockSize)
+            {
+                for (int x = 0; x < frame.Width; x += mBlockSize)
+                {
+                    sourceIndex++;
+                    Debug.Assert(ItoX(sourceIndex) == x);
+                    Debug.Assert(ItoY(sourceIndex) == y);
+
+                    // Skip clear blocks
+                    int width = Math.Min(mBlockSize, frame.Width - x);
+                    int height = Math.Min(mBlockSize, frame.Height - y);
+                    if (!disableDelta && frame.IsMatch(x, y, width, height, mBackground, x, y))
+                    {
+                        continue; // Nothing changed, skip it
+                    }
+                    frame.Copy(x, y, width, height, mBackground, x, y);
+
+                    // Check for solid blocks
+                    if (frame.IsSolid(x, y, width, height))
+                    {
+                        blocks.Add(new Block(sourceIndex, Score.Solid));
+                        continue;
+                    }
+                    // Check for duplicates
+                    int duplicateIndex;
+                    if (IsDuplicate(frame, duplicateHashToIndex, sourceIndex, out duplicateIndex))
+                    {
+                        blocks.Add(new Block(sourceIndex, Score.Duplicate));
+                        duplicates[sourceIndex] = duplicateIndex;
+                        continue;
+                    }
+                    // Check for PNG or JPG
+                    bool usePng = mCompression == CompressionType.Png;
+                    if (mCompression == CompressionType.SmartPng && width > 4 && height > 4)
+                    {
+                        // SmartPng - see if
+                        var rleCount = frame.RleCount(x, y, width, height);
+                        var rleTotal = (height-1) * (width-1);
+                        var rleCompression = rleCount / (float)rleTotal;
+                        if (rleCompression > mPngCompressionThreshold && !frame.LowFrequency(x, y, width, height))
+                            usePng = true;
+                    }
+                    blocks.Add(new Block(sourceIndex, usePng ? Score.Png : Score.Jpg));
+                }
+            }
+            mDuplicates = duplicates.Count;
+        }
+
+
+        private bool IsDuplicate(Bitmap32Bits bm, 
+                                 Dictionary<int, int> duplicateHashToIndex, 
+                                 int sourceIndex, 
+                                 out int duplicateIndex)
+        {
+            int x = ItoX(sourceIndex);
+            int y = ItoY(sourceIndex);
+            int width = Math.Min(mBlockSize, bm.Width - x);
+            int height = Math.Min(mBlockSize, bm.Height - y);
+
+            int hash = bm.HashBlock(x, y, width, height);
+
+            if (duplicateHashToIndex.ContainsKey(hash))
+            {
+                // Possibly a match, but needs verification just in case there is a hash collison
+                duplicateIndex = duplicateHashToIndex[hash];
+                if (bm.IsMatch(x, y, width, height, bm, ItoX(duplicateIndex), ItoY(duplicateIndex)))
+                {
+                    return true;
+                }
+                // Hash collision.  This is very rare.
+                mHashCollisions++;
+                duplicateIndex = 0;
+                return false;
+            }
+            // First time this block has been seen
+            duplicateHashToIndex[hash] = sourceIndex;
+            duplicateIndex = 0;
+            return false;
+        }
+
+        /// <summary>
+        /// Build a bitmap with any of the given score bits set
+        /// </summary>
+        void BuildBitmap(Bitmap32Bits frame, 
+                         List<Block> blocks, 
+                         Dictionary<int, int> duplicates, 
+                         Score score, 
+                         out Bitmap image, 
+                         out string draw)
+        {
+            // Count blocks to write to target
+            int numTargetBlocks = 0;
+            foreach (var block in blocks)
+                if ( (block.Score & score & (Score.Jpg | Score.Png)) != Score.None )
+                    numTargetBlocks++;
+
+            // Generate the bitmap
+            int size = (int)Math.Sqrt(numTargetBlocks) + 1;
+            var bmTarget = new Bitmap(size * mBlockSize, size * mBlockSize, PixelFormat.Format32bppArgb);
+            var bmdTarget = new Bitmap32Bits(bmTarget, ImageLockMode.WriteOnly);
+            var blockWriter = new BlockWriter(frame, bmdTarget, mBlockSize, duplicates);
+            foreach (var block in blocks)
+                if ((block.Score & score) != Score.None)
+                    blockWriter.Write(block);
+
+            bmdTarget.Dispose();
+
+            image = bmTarget;
+            draw = blockWriter.GetDrawString();
+        }
+
+        /// <summary>
+        /// Slow function for debugging
+        /// </summary>
+        void CopyDuplicateAttributesForDebug(List<Block> blocks, Dictionary<int, int> duplicates)
+        {
+            for (int i = 0; i < blocks.Count; i++)
+            {
+                int di;
+                Block block = blocks[i];
+                if (block.Score.HasFlag(Score.Duplicate) && duplicates.TryGetValue(block.Index, out di))
+                    for (int j = 0; j < i; j++)
+                        if (blocks[j].Index == di)
+                            blocks[i] = new Block(block.Index, blocks[j].Score | Score.Duplicate);
+            }
+        }
+
+        /// <summary>
+        /// Generate a full frame from the bitmap, and then dispose the bitmap
+        /// </summary>
+        private static void GenerateFullFrame(Bitmap frame, ImageFormat format, out byte[] bytes, out string draw)
+        {
+            var ms = new MemoryStream();
+            frame.Save(ms, format);
+            bytes = ms.ToArray();
+            draw = "!";
+            frame.Dispose();
+        }
+
+        private Bitmap GenerateCompressionMap(int width, int height, List<Block> blocks)
+        {
+            // Draw output frame
+            Bitmap map = new Bitmap(width, height, PixelFormat.Format32bppRgb);
+            using (var mapGr = Graphics.FromImage(map))
+                foreach (var block in blocks)
+                {
+                    Score score = block.Score;
+                    int x = ItoX(block.Index);
+                    int y = ItoY(block.Index);
+                    if (score.HasFlag(Score.Solid))
+                    { 
+                        mapGr.FillRectangle(Brushes.White, new Rectangle(x, y, mBlockSize, mBlockSize));
+                    }
+                    else if (score.HasFlag(Score.Png))
+                    { 
+                        mapGr.FillRectangle(Brushes.Gray, new Rectangle(x, y, mBlockSize, mBlockSize));
+                    }
+                    else if (score.HasFlag(Score.Jpg))
+                    { 
+                        mapGr.FillRectangle(Brushes.Pink, new Rectangle(x, y, mBlockSize, mBlockSize));
+                    }
+
+                    if (score.HasFlag(Score.Duplicate))
+                    {
+                        mapGr.DrawRectangle(Pens.Blue, new Rectangle(x + 4, y + 4, mBlockSize - 8, mBlockSize - 8));
+                    }
+                }
+            return map;
+        }
+
+        private Bitmap GenerateHideMap(Bitmap frame, List<Block> blocks, Score hide)
+        {
+            Bitmap map = new Bitmap(frame.Width, frame.Height, PixelFormat.Format32bppRgb);
+            using (var mapGr = Graphics.FromImage(map))
+            {
+                mapGr.DrawImage(frame, 0, 0);
+                foreach (var block in blocks)
+                    if (block.Score.HasFlag(hide))
+                    {
+                        int x = ItoX(block.Index);
+                        int y = ItoY(block.Index);
+                        mapGr.FillRectangle(Brushes.Black, x, y, mBlockSize, mBlockSize);
+                    }
+            }
+            return map;
+        }
+
+    }
+}

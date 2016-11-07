@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<!-- Copyright (C) 2016 by Jeremy Spiller, all rights reserved. -->
+<html>
+<head>
+    <script type="text/javascript" src="Webtop.js"></script>
+</head>
+<body>
+    <table>
+        <tr>
+        <td><a href="http://gosub.com" target="_blank"><img src="GosubLogo.png" alt="Gosub" /> </a></td>
+        <td><h1><a href="http://gosub.com" target="_blank">Web Remote Viewer</a></h1></td>
+        </tr>
+    </table>
+    <canvas width="1200" height="600" id="canvas2">Canvas not available.  Please upgrade your browser.</canvas>
+    <br />
+    <table>
+        <tr>
+            <td>
+                <label><input type="checkbox" id="checkDoNotScale" onchange="UpdateOptions()">Actual screen size</label>
+                <br /> <br />
+                <label><input type="radio" name="compression" id="radioJpg" checked="checked" onchange="UpdateOptions()">Compress JPG</label>
+                <br />
+                <label><input type="radio" name="compression" id="radioPng" onchange="UpdateOptions()">Compress PNG</label>
+                <br />
+                <label><input type="radio" name="compression" id="radioSmartPng" onchange="UpdateOptions()">Smart PNG (not done)</label>
+                <br />
+            </td>
+            <td>
+                <label><input type="radio" name="output" id="radioNormal" checked="checked" onchange="UpdateOptions()">Normal</label>
+                <br />
+                <label><input type="radio" name="output" id="radioDisableDelta" onchange="UpdateOptions()">Disable frame diff</label>
+                <br />
+                <label><input type="radio" name="output" id="radioFullFrameJpg" onchange="UpdateOptions()">Full frame JPG</label>
+                <br />
+                <label><input type="radio" name="output" id="radioFullFramePng" onchange="UpdateOptions()">Full frame PNG</label>
+                <br />
+                <label><input type="radio" name="output" id="radioCompressionMap" onchange="UpdateOptions()">Compression map</label>
+                <br />
+                <label><input type="radio" name="output" id="radioCompressionDeltaMap" onchange="UpdateOptions()">Compression delta map</label>
+                <br />
+                <label><input type="radio" name="output" id="radioHideJpg" onchange="UpdateOptions()">Hide JPG</label>
+                <br />
+                <label><input type="radio" name="output" id="radioHidePng" onchange="UpdateOptions()">Hide PNG</label>
+                <br />
+            </td>
+            <td>
+                <p id="drawString2">Draw string</p>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+
+<script>
+
+    // Start the remote viewer
+    var viewer = new WebRemoteViewer(document.getElementById('drawString2'), document.getElementById('canvas2'));
+    UpdateOptions();
+    viewer.Start();
+
+    function UpdateOptions()
+    {
+        // Check boxes
+        var options = "&";
+        if (!document.getElementById('checkDoNotScale').checked)
+            options += "maxwidth=" + document.getElementById('canvas2').width
+                       + "&maxheight=" + document.getElementById('canvas2').height + "&";
+
+        // Compression type radio buttons
+        if (document.getElementById('radioJpg').checked)
+            options += "compression=jpg&";
+        else if (document.getElementById('radioPng').checked)
+            options += "compression=png&";
+        else if (document.getElementById('radioSmartPng').checked)
+            options += "compression=smartpng&";
+
+        // Output type radio button
+        if (document.getElementById('radioDisableDelta').checked)
+            options += "output=DisableDelta&";
+        else if (document.getElementById('radioFullFrameJpg').checked)
+            options += "output=FullFrameJpg&";
+        else if (document.getElementById('radioFullFramePng').checked)
+            options += "output=FullFramePng&";
+        else if (document.getElementById('radioCompressionMap').checked)
+            options += "output=CompressionMap&";
+        else if (document.getElementById('radioCompressionDeltaMap').checked)
+            options += "output=CompressionDeltaMap&";
+        else if (document.getElementById('radioHideJpg').checked)
+            options += "output=HideJpg&";
+        else if (document.getElementById('radioHidePng').checked)
+            options += "output=HidePng&";
+
+        viewer.DrawOptions = options;
+        console.log("Options=" + options);
+    }
+
+</script>
+

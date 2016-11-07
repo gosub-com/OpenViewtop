@@ -5,14 +5,14 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.IO;
 
-namespace Gosub.WebRemoteViewer
+namespace Gosub.Webtop
 {
     public partial class FormMain : Form
     {
         FileServer mFileServer;
-        WrvServer mWrvServer;
+        WebtopServer mWrvServer;
         FrameCollector mCollector;
-        FrameAnalyzer mAnalyzer;
+        FrameCompressor mAnalyzer;
 
         string[] prefixes = { "http://*:8089/", "https://*:8443/" };
 
@@ -56,9 +56,9 @@ namespace Gosub.WebRemoteViewer
             try
             {
                 mFileServer = new FileServer("http://localhost:8080/", Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www"));
-                mWrvServer = new WrvServer();
+                mWrvServer = new WebtopServer();
                 mCollector = new FrameCollector();
-                mAnalyzer = new FrameAnalyzer();
+                mAnalyzer = new FrameCompressor();
                 var wrvServer = mWrvServer; // Do not capture the field, only the local
                 mFileServer.SetRequestHandler("wrv", (context) => { wrvServer.ProcessWebRemoteViewerRequest(context); } );
                 mFileServer.Start();
@@ -92,13 +92,6 @@ namespace Gosub.WebRemoteViewer
             labelLinkToWebSite.Text = "Web server stopped";
             buttonStop.Enabled = false;
             buttonStart.Enabled = true;
-        }
-
-        private void timerRefresh_Tick(object sender, EventArgs e)
-        {
-            FrameAnalyzer.NoCompression = checkNoCompression.Checked;
-            FrameAnalyzer.SuppressBackgroundCompare = checkSuppressBackgroundCompare.Checked;
-            FrameAnalyzer.SmartPng = checkSmartPng.Checked;
         }
 
     }

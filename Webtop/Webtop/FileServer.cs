@@ -8,9 +8,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Collections.Generic;
 
-namespace Gosub.WebRemoteViewer
+namespace Gosub.Webtop
 {
-
     /// <summary>
     /// Serve static files from the given root path. 
     /// </summary>

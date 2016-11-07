@@ -6,7 +6,7 @@ using System.Drawing.Imaging;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace Gosub.WebRemoteViewer
+namespace Gosub.Webtop
 {
     /// <summary>
     /// Manage a 32 bit per pixel bitmap, either locked 

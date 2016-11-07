@@ -3,7 +3,7 @@
 using System;
 using System.Windows.Forms;
 
-namespace Gosub.WebRemoteViewer
+namespace Gosub.Webtop
 {
     static class Program
     {

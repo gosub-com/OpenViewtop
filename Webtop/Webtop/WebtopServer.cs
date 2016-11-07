@@ -6,18 +6,18 @@ using System.Net;
 using System.IO;
 using System.Collections.Generic;
 
-namespace Gosub.WebRemoteViewer
+namespace Gosub.Webtop
 {
     /// <summary>
     /// Handle web remote view requests (each request in its own thread)
     /// </summary>
-    class WrvServer
+    class WebtopServer
     {
         const int CONNECTION_TIMEOUT_SEC = 30;
         object mLock = new object();
 
         int mSessionId = 1;
-        Dictionary<int, WrvSession> mSessions = new Dictionary<int, WrvSession>();
+        Dictionary<int, WebtopSession> mSessions = new Dictionary<int, WebtopSession>();
 
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
@@ -41,10 +41,10 @@ namespace Gosub.WebRemoteViewer
             if (query == "startsession")
             {
                 PurgeInactiveSessions();
-                WrvSession newSession;
+                WebtopSession newSession;
                 lock (mLock)
                 {
-                    newSession = new WrvSession(mSessionId);
+                    newSession = new WebtopSession(mSessionId);
                     newSession.LastRequestTime = DateTime.Now;
                     mSessions[mSessionId++] = newSession;
                 }
@@ -59,7 +59,7 @@ namespace Gosub.WebRemoteViewer
                 FileServer.SendError(response, "Query must include 'sid'", 400);
                 return;
             }
-            WrvSession session;
+            WebtopSession session;
             lock (mLock)
             {
                 if (!mSessions.TryGetValue(sid, out session))

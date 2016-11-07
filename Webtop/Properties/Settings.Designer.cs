@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-namespace Gosub.WebRemoteViewer.Properties {
+namespace Gosub.Webtop.Properties {
     
     
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
