@@ -138,6 +138,7 @@ namespace Gosub.Viewtop
 
                 // Clean out history
                 mHistory.Remove(sequence - HISTORY_FRAMES);
+                mHistory.Remove(sequence - HISTORY_FRAMES-1);
                 Debug.Assert(mHistory.Count <= HISTORY_FRAMES);
 
                 // We received a request for the next frame, which we don't have yet.
@@ -145,42 +146,40 @@ namespace Gosub.Viewtop
                 //       Future requests were queued above.  The only way to get here 
                 //       is when requesting the next frame
                 Debug.Assert(sequence == mSequence + 1);
-                mSequence = sequence;
 
                 if (mCollector == null)
                     mCollector = new FrameCollector();
                 if (mAnalyzer == null)
                     mAnalyzer = new FrameCompressor();
 
-                // Send draw options (if any)
+                // Process MaxWidth and MaxHeight
                 int maxWidth = 0;
                 int maxHeight = 0;
                 int.TryParse(drawOptions["MaxWidth"], out maxWidth);
                 int.TryParse(drawOptions["MaxHeight"], out maxHeight);
+
+                // Full frame analysis
+                mAnalyzer.FullFrame = drawOptions["fullframe"] != null;
 
                 // Process compression type
                 string compressionType = drawOptions["compression"];
                 compressionType = compressionType == null ? "" : compressionType.ToLower();
                 if (compressionType == "png")
                     mAnalyzer.Compression = FrameCompressor.CompressionType.Png;
-                else if (compressionType == "smartpng")
-                    mAnalyzer.Compression = FrameCompressor.CompressionType.SmartPng;
-                else
+                else if (compressionType == "jpg")
                     mAnalyzer.Compression = FrameCompressor.CompressionType.Jpg;
+                else
+                    mAnalyzer.Compression = FrameCompressor.CompressionType.SmartPng;
 
                 // Process output type
                 string outputType = drawOptions["output"];
                 outputType = outputType == null ? "" : outputType.ToLower();
-                if (outputType == "disabledelta")
-                    mAnalyzer.Output = FrameCompressor.OutputType.DisableDelta;
-                else if (outputType == "fullframejpg")
+                if (outputType == "fullframejpg")
                     mAnalyzer.Output = FrameCompressor.OutputType.FullFrameJpg;
                 else if (outputType == "fullframepng")
                     mAnalyzer.Output = FrameCompressor.OutputType.FullFramePng;
                 else if (outputType == "compressionmap")
                     mAnalyzer.Output = FrameCompressor.OutputType.CompressionMap;
-                else if (outputType == "compressiondeltamap")
-                    mAnalyzer.Output = FrameCompressor.OutputType.CompressionDeltaMap;
                 else if (outputType == "hidejpg")
                     mAnalyzer.Output = FrameCompressor.OutputType.HideJpg;
                 else if (outputType == "hidepng")
@@ -192,7 +191,7 @@ namespace Gosub.Viewtop
                 // Collect the frame
                 var bm = mCollector.CreateFrame(maxWidth, maxHeight);
                 var compressStartTime = DateTime.Now;
-                mAnalyzer.Compress(bm, out image, out draw);
+                var frames = mAnalyzer.Compress(bm);
                 bm.Dispose();
                 var compressTime = DateTime.Now - compressStartTime;
 
@@ -202,18 +201,26 @@ namespace Gosub.Viewtop
                 stats.CompressTime = (int)compressTime.TotalMilliseconds;
                 stats.Duplicates = mAnalyzer.Duplicates;
                 stats.Collisions = mAnalyzer.HashCollisionsEver;
-                stats.Size = "" + (image.Length + draw.Length) / 1000 + "Kb";
+                int size = 0;
+                foreach (var frame in frames)
+                    size += frame.Draw.Length + frame.Image.Length;
+                stats.Size = "" + size/1000 + "Kb";
 
                 // Generate the image draw JSON
-                var frame = new FrameInfo();
-                frame.Stats = stats;
-                frame.Draw = draw; // Save draw buffer before converting to JSON
-                frame.Draw = JsonConvert.SerializeObject(frame); // replace draw buffer with JSON
-                frame.Image = image;
-                draw = frame.Draw;
+                for (int i = 0;  i < frames.Length;  i++)
+                {
+                    var frame = new FrameInfo();
+                    frame.Stats = stats;
+                    frame.Draw = frames[i].Draw;
+                    frame.Draw = JsonConvert.SerializeObject(frame); // replace draw buffer with JSON
+                    frame.Image = frames[i].Image;
+                    mHistory[sequence + i] = frame;
+                }
+                Debug.Assert(frames.Length != 0);
+                mSequence += frames.Length;
 
-                // Save frame in history for repeated requests
-                mHistory[sequence] = frame;
+                image = mHistory[sequence].Image;
+                draw = mHistory[sequence].Draw;
                 return true;
             }
         }

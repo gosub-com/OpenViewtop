@@ -17,26 +17,24 @@
         <tr>
             <td>
                 <label><input type="checkbox" id="checkDoNotScale" onchange="UpdateOptions()">Actual screen size</label>
+                <br />
+                <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Full frame analysis (disable delta)</label>
                 <br /> <br />
-                <label><input type="radio" name="compression" id="radioJpg" checked="checked" onchange="UpdateOptions()">Compress JPG</label>
+                <label><input type="radio" name="compression" id="radioSmartPng" checked="checked" onchange="UpdateOptions()">Smart PNG</label>
+                <br />
+                <label><input type="radio" name="compression" id="radioJpg" onchange="UpdateOptions()">Compress JPG</label>
                 <br />
                 <label><input type="radio" name="compression" id="radioPng" onchange="UpdateOptions()">Compress PNG</label>
-                <br />
-                <label><input type="radio" name="compression" id="radioSmartPng" onchange="UpdateOptions()">Smart PNG (not done)</label>
                 <br />
             </td>
             <td>
                 <label><input type="radio" name="output" id="radioNormal" checked="checked" onchange="UpdateOptions()">Normal</label>
-                <br />
-                <label><input type="radio" name="output" id="radioDisableDelta" onchange="UpdateOptions()">Disable frame diff</label>
                 <br />
                 <label><input type="radio" name="output" id="radioFullFrameJpg" onchange="UpdateOptions()">Full frame JPG</label>
                 <br />
                 <label><input type="radio" name="output" id="radioFullFramePng" onchange="UpdateOptions()">Full frame PNG</label>
                 <br />
                 <label><input type="radio" name="output" id="radioCompressionMap" onchange="UpdateOptions()">Compression map</label>
-                <br />
-                <label><input type="radio" name="output" id="radioCompressionDeltaMap" onchange="UpdateOptions()">Compression delta map</label>
                 <br />
                 <label><input type="radio" name="output" id="radioHideJpg" onchange="UpdateOptions()">Hide JPG</label>
                 <br />
@@ -65,6 +63,8 @@
         if (!document.getElementById('checkDoNotScale').checked)
             options += "maxwidth=" + document.getElementById('canvas2').width
                        + "&maxheight=" + document.getElementById('canvas2').height + "&";
+        if (document.getElementById('checkFullFrame').checked)
+            options += "fullframe=true&";
 
         // Compression type radio buttons
         if (document.getElementById('radioJpg').checked)
@@ -75,16 +75,12 @@
             options += "compression=smartpng&";
 
         // Output type radio button
-        if (document.getElementById('radioDisableDelta').checked)
-            options += "output=DisableDelta&";
-        else if (document.getElementById('radioFullFrameJpg').checked)
+        if (document.getElementById('radioFullFrameJpg').checked)
             options += "output=FullFrameJpg&";
         else if (document.getElementById('radioFullFramePng').checked)
             options += "output=FullFramePng&";
         else if (document.getElementById('radioCompressionMap').checked)
             options += "output=CompressionMap&";
-        else if (document.getElementById('radioCompressionDeltaMap').checked)
-            options += "output=CompressionDeltaMap&";
         else if (document.getElementById('radioHideJpg').checked)
             options += "output=HideJpg&";
         else if (document.getElementById('radioHidePng').checked)

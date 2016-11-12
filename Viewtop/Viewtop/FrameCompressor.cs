@@ -25,8 +25,9 @@ namespace Gosub.Viewtop
         int mHashCollisions;
         int mDuplicates;
         int mBlocksX;
-
         bool mForceDisableDelta;
+
+        bool mFullFrameAnalysis;
         OutputType mOutput;
         CompressionType mCompression;
 
@@ -47,11 +48,9 @@ namespace Gosub.Viewtop
         public enum OutputType
         {
             Normal,
-            DisableDelta,
             FullFrameJpg,
             FullFramePng,
             CompressionMap,
-            CompressionDeltaMap,
             HideJpg,
             HidePng
         }
@@ -71,6 +70,15 @@ namespace Gosub.Viewtop
             Duplicate = 2,
             Png = 4,
             Jpg = 8
+        }
+
+        /// <summary>
+        /// Force full frame analysis without differential compression
+        /// </summary>
+        public bool FullFrame
+        {
+            get { return mFullFrameAnalysis; }
+            set { mFullFrameAnalysis = value; }
         }
 
         public OutputType Output
@@ -95,28 +103,33 @@ namespace Gosub.Viewtop
             }
         }
 
+        public class Frame
+        {
+            public string Draw;
+            public byte[] Image;
+            public Frame(string draw, byte []image) { Draw = draw;  Image = image; }
+        }
+
         /// <summary>
         /// Analyze a bitmap, and keep a copy as the new background.  If the bitmap is not
         /// the same size as the previous one, a new comparison is made.  You must
-        /// dispose the bitmap when done with it.
+        /// dispose the bitmap when done with it.  Returns 1 or 2 frames (PNG/JPG)
+        /// depending on settings
         /// </summary>
-        public void Compress(Bitmap frame, out byte []bytes, out string draw)
+        public Frame []Compress(Bitmap frame)
         {
             // Generate full frame JPG or PNG (debugging output)
             if (mOutput == OutputType.FullFrameJpg || mOutput == OutputType.FullFramePng)
             {
-                GenerateFullFrame((Bitmap)frame.Clone(),
-                                  mOutput == OutputType.FullFrameJpg ? ImageFormat.Jpeg : ImageFormat.Png,
-                                  out bytes, out draw);
-                return;
+                var f = GenerateFullFrame((Bitmap)frame, mOutput == OutputType.FullFrameJpg ? ImageFormat.Jpeg : ImageFormat.Png);
+                return new Frame[] { f };
             }
 
             // Force full frame analysis if requested
             bool disableDelta = mForceDisableDelta 
-                                || Output == OutputType.DisableDelta 
-                                || Output == OutputType.CompressionMap 
-                                || Output == OutputType.HideJpg 
-                                || Output == OutputType.HidePng;
+                                    || mFullFrameAnalysis
+                                    || Output == OutputType.HideJpg 
+                                    || Output == OutputType.HidePng;
             mForceDisableDelta = false;
             
             // Optionally create background if it doesn't exist, or the size changed
@@ -137,32 +150,48 @@ namespace Gosub.Viewtop
             var frameBits = new Bitmap32Bits(frame, ImageLockMode.ReadOnly);
             List<Block> blocks;
             Dictionary<int, int> duplicates;
-            ScoreFrame(frameBits, disableDelta, out blocks, out duplicates);
+            int jpgCount;
+            int pngCount;
+            ScoreFrame(frameBits, disableDelta, out blocks, out duplicates, out jpgCount, out pngCount);
 
-            // Build the bitmap (TBD: smartPng)
-            Bitmap jpg;
-            BuildBitmap(frameBits, blocks, duplicates, Score.Solid | Score.Duplicate | Score.Jpg | Score.Png, out jpg, out draw);
+            // Build the bitmaps (JPG and PNG)
+            Frame[] frames;
+            if (jpgCount == 0 || pngCount == 0)
+            {
+                // Build one frame (both PNG and JPG)
+                frames = new Frame[]
+                    { BuildBitmap(frameBits, blocks, 
+                                  duplicates, Score.Solid | Score.Duplicate | Score.Jpg | Score.Png, 
+                                  pngCount == 0 ? ImageFormat.Jpeg : ImageFormat.Png) };
+
+            }
+            else
+            {
+                // Build two frames (PNG first, and JPG second)
+                frames = new Frame[]
+                    { BuildBitmap(frameBits, blocks, duplicates, Score.Solid | Score.Duplicate | Score.Png, ImageFormat.Png),
+                      BuildBitmap(frameBits, blocks, duplicates, Score.Duplicate | Score.Jpg, ImageFormat.Jpeg)};
+            }
             frameBits.Dispose();
 
-            // Compress bitmap (TBD: smartPng)
-            var bmStream = new MemoryStream();
-            jpg.Save(bmStream, mCompression == CompressionType.Png ? ImageFormat.Png : ImageFormat.Jpeg);
-            jpg.Dispose();
-            bytes = bmStream.ToArray();
-
             // Optionally create compression maps and other debug output
-            if (mOutput == OutputType.CompressionMap || mOutput == OutputType.CompressionDeltaMap)
+            if (mOutput == OutputType.CompressionMap)
             {
                 CopyDuplicateAttributesForDebug(blocks, duplicates);
                 var map = GenerateCompressionMap(frame.Width, frame.Height, blocks);
-                GenerateFullFrame(map, ImageFormat.Png, out bytes, out draw);
+                var f = GenerateFullFrame(map, ImageFormat.Png);
+                map.Dispose();
+                return new Frame[] { f };
             }
             else if (mOutput == OutputType.HideJpg || mOutput == OutputType.HidePng)
             {
                 CopyDuplicateAttributesForDebug(blocks, duplicates);
                 var map = GenerateHideMap(frame, blocks, mOutput == OutputType.HideJpg ? Score.Jpg : Score.Png);
-                GenerateFullFrame(map, ImageFormat.Jpeg, out bytes, out draw);
+                var f = GenerateFullFrame(map, ImageFormat.Jpeg);
+                map.Dispose();
+                return new Frame[] { f };
             }
+            return frames;
         }
 
         /// <summary>
@@ -171,10 +200,14 @@ namespace Gosub.Viewtop
         private void ScoreFrame(Bitmap32Bits frame, 
                                 bool disableDelta, 
                                 out List<Block> blocks, 
-                                out Dictionary<int, int> duplicates)
+                                out Dictionary<int, int> duplicates,
+                                out int jpgCount,
+                                out int pngCount)
         {
             blocks = new List<Block>();
             duplicates = new Dictionary<int, int>();
+            jpgCount = 0;
+            pngCount = 0;
 
             var sourceIndex = -1;
             var duplicateHashToIndex = new Dictionary<int, int>();
@@ -209,11 +242,11 @@ namespace Gosub.Viewtop
                         duplicates[sourceIndex] = duplicateIndex;
                         continue;
                     }
-                    // Check for PNG or JPG
+                    // Compression: SmartPNG, JPG, or PNG
                     bool usePng = mCompression == CompressionType.Png;
-                    if (mCompression == CompressionType.SmartPng && width > 4 && height > 4)
+                    if (mCompression == CompressionType.SmartPng && width >= 4 && height >= 4)
                     {
-                        // SmartPng - see if
+                        // SmartPng - Check to see if the block would compress well with PNG
                         var rleCount = frame.RleCount(x, y, width, height);
                         var rleTotal = (height-1) * (width-1);
                         var rleCompression = rleCount / (float)rleTotal;
@@ -221,6 +254,10 @@ namespace Gosub.Viewtop
                             usePng = true;
                     }
                     blocks.Add(new Block(sourceIndex, usePng ? Score.Png : Score.Jpg));
+                    if (usePng)
+                        pngCount++;
+                    else
+                        jpgCount++;
                 }
             }
             mDuplicates = duplicates.Count;
@@ -261,12 +298,11 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Build a bitmap with any of the given score bits set
         /// </summary>
-        void BuildBitmap(Bitmap32Bits frame, 
+        Frame BuildBitmap(Bitmap32Bits frame, 
                          List<Block> blocks, 
                          Dictionary<int, int> duplicates, 
-                         Score score, 
-                         out Bitmap image, 
-                         out string draw)
+                         Score score,
+                         ImageFormat format)
         {
             // Count blocks to write to target
             int numTargetBlocks = 0;
@@ -282,11 +318,15 @@ namespace Gosub.Viewtop
             foreach (var block in blocks)
                 if ((block.Score & score) != Score.None)
                     blockWriter.Write(block);
-
             bmdTarget.Dispose();
 
-            image = bmTarget;
-            draw = blockWriter.GetDrawString();
+            // Compress frame to stream
+            var targetStream = new MemoryStream();
+            bmTarget.Save(targetStream, format);
+            bmTarget.Dispose();
+            if (targetStream.GetBuffer().Length == targetStream.Length)
+                return new Frame(blockWriter.GetDrawString(), targetStream.GetBuffer());
+            return new Frame(blockWriter.GetDrawString(), targetStream.ToArray());
         }
 
         /// <summary>
@@ -306,15 +346,15 @@ namespace Gosub.Viewtop
         }
 
         /// <summary>
-        /// Generate a full frame from the bitmap, and then dispose the bitmap
+        /// Generate a full frame from the bitmap
         /// </summary>
-        private static void GenerateFullFrame(Bitmap frame, ImageFormat format, out byte[] bytes, out string draw)
+        private static Frame GenerateFullFrame(Bitmap frame, ImageFormat format)
         {
             var ms = new MemoryStream();
             frame.Save(ms, format);
-            bytes = ms.ToArray();
-            draw = "!";
-            frame.Dispose();
+            if (ms.GetBuffer().Length == ms.Length)
+                return new Frame("!", ms.GetBuffer());
+            return new Frame("!", ms.ToArray());
         }
 
         private Bitmap GenerateCompressionMap(int width, int height, List<Block> blocks)
