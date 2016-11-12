@@ -3,7 +3,7 @@
 using System;
 using System.Windows.Forms;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     static class Program
     {

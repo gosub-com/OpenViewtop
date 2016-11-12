@@ -1,4 +1,4 @@
-﻿namespace Gosub.Webtop
+﻿namespace Gosub.Viewtop
 {
     partial class FormMain
     {

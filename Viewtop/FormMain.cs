@@ -5,12 +5,12 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.IO;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     public partial class FormMain : Form
     {
         FileServer mFileServer;
-        WebtopServer mWrvServer;
+        ViewtopServer mOvtServer;
         FrameCollector mCollector;
         FrameCompressor mAnalyzer;
 
@@ -56,11 +56,11 @@ namespace Gosub.Webtop
             try
             {
                 mFileServer = new FileServer("http://localhost:8080/", Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www"));
-                mWrvServer = new WebtopServer();
+                mOvtServer = new ViewtopServer();
                 mCollector = new FrameCollector();
                 mAnalyzer = new FrameCompressor();
-                var wrvServer = mWrvServer; // Do not capture the field, only the local
-                mFileServer.SetRequestHandler("wrv", (context) => { wrvServer.ProcessWebRemoteViewerRequest(context); } );
+                var ovtServer = mOvtServer; // Do not capture the field, only the local
+                mFileServer.SetRequestHandler("ovt", (context) => { ovtServer.ProcessWebRemoteViewerRequest(context); } );
                 mFileServer.Start();
             }
             catch (Exception ex)
@@ -85,7 +85,7 @@ namespace Gosub.Webtop
             if (mFileServer != null)
                 mFileServer.Stop();
             mFileServer = null;
-            mWrvServer = null;
+            mOvtServer = null;
             mCollector = null;
             mAnalyzer = null;
 

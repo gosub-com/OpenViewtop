@@ -8,9 +8,9 @@ using System.Threading;
 using System.Diagnostics;
 using System.Collections.Specialized;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
-    class WebtopSession
+    class ViewtopSession
     {
         const int FUTURE_FRAME_TIMEOUT_SEC = 5; // Allow up to 5 seconds before cancelling a request
         const int HISTORY_FRAMES = 2; // Save old frames for repeated requests
@@ -41,7 +41,7 @@ namespace Gosub.Webtop
             public int Collisions { get; set; }
         }
 
-        public WebtopSession(int sessionId)
+        public ViewtopSession(int sessionId)
         {
             SessionId = sessionId;
         }

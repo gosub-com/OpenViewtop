@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Diagnostics;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     /// <summary>
     /// Generate a bitmap block by block, copying source blocks to target blocks when necessary

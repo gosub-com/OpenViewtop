@@ -7,8 +7,8 @@
     <ProjectGuid>{270AEC26-5435-4F0E-B786-409026A688B1}</ProjectGuid>
     <OutputType>WinExe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>Gosub.Webtop</RootNamespace>
-    <AssemblyName>Gosub.Webtop</AssemblyName>
+    <RootNamespace>Gosub.Viewtop</RootNamespace>
+    <AssemblyName>Gosub.Viewtop</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -51,21 +51,21 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Webtop\BlockWriter.cs" />
-    <Compile Include="Webtop\FileServer.cs" />
+    <Compile Include="Viewtop\BlockWriter.cs" />
+    <Compile Include="Viewtop\FileServer.cs" />
     <Compile Include="FormMain.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="FormMain.Designer.cs">
       <DependentUpon>FormMain.cs</DependentUpon>
     </Compile>
-    <Compile Include="Webtop\FrameCompressor.cs" />
+    <Compile Include="Viewtop\FrameCompressor.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="Webtop\FrameCollector.cs" />
-    <Compile Include="Webtop\Bitmap32Bits.cs" />
-    <Compile Include="Webtop\WebtopServer.cs" />
-    <Compile Include="Webtop\WebtopSession.cs" />
+    <Compile Include="Viewtop\FrameCollector.cs" />
+    <Compile Include="Viewtop\Bitmap32Bits.cs" />
+    <Compile Include="Viewtop\ViewtopServer.cs" />
+    <Compile Include="Viewtop\ViewtopSession.cs" />
     <EmbeddedResource Include="FormMain.resx">
       <DependentUpon>FormMain.cs</DependentUpon>
     </EmbeddedResource>
@@ -101,7 +101,7 @@
     <Content Include="www\index.html">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="www\Webtop.js">
+    <Content Include="www\Viewtop.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="www\_template_without_bom.html">

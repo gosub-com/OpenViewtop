@@ -2,13 +2,13 @@
 <!-- Copyright (C) 2016 by Jeremy Spiller, all rights reserved. -->
 <html>
 <head>
-    <script type="text/javascript" src="Webtop.js"></script>
+    <script type="text/javascript" src="Viewtop.js"></script>
 </head>
 <body>
     <table>
         <tr>
         <td><a href="http://gosub.com" target="_blank"><img src="GosubLogo.png" alt="Gosub" /> </a></td>
-        <td><h1><a href="http://gosub.com" target="_blank">Web Remote Viewer</a></h1></td>
+        <td><h1><a href="http://gosub.com" target="_blank">Open Viewtop</a></h1></td>
         </tr>
     </table>
     <canvas width="1200" height="600" id="canvas2">Canvas not available.  Please upgrade your browser.</canvas>
@@ -54,7 +54,7 @@
 <script>
 
     // Start the remote viewer
-    var viewer = new WebRemoteViewer(document.getElementById('drawString2'), document.getElementById('canvas2'));
+    var viewer = new Viewtop(document.getElementById('drawString2'), document.getElementById('canvas2'));
     UpdateOptions();
     viewer.Start();
 

@@ -6,7 +6,7 @@ using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Threading;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     class FrameCollector
     {

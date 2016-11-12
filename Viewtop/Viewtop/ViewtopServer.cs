@@ -6,18 +6,18 @@ using System.Net;
 using System.IO;
 using System.Collections.Generic;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     /// <summary>
-    /// Handle web remote view requests (each request in its own thread)
+    /// Handle Viewtop requests (each request in its own thread)
     /// </summary>
-    class WebtopServer
+    class ViewtopServer
     {
         const int CONNECTION_TIMEOUT_SEC = 30;
         object mLock = new object();
 
         int mSessionId = 1;
-        Dictionary<int, WebtopSession> mSessions = new Dictionary<int, WebtopSession>();
+        Dictionary<int, ViewtopSession> mSessions = new Dictionary<int, ViewtopSession>();
 
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
@@ -41,10 +41,10 @@ namespace Gosub.Webtop
             if (query == "startsession")
             {
                 PurgeInactiveSessions();
-                WebtopSession newSession;
+                ViewtopSession newSession;
                 lock (mLock)
                 {
-                    newSession = new WebtopSession(mSessionId);
+                    newSession = new ViewtopSession(mSessionId);
                     newSession.LastRequestTime = DateTime.Now;
                     mSessions[mSessionId++] = newSession;
                 }
@@ -59,7 +59,7 @@ namespace Gosub.Webtop
                 FileServer.SendError(response, "Query must include 'sid'", 400);
                 return;
             }
-            WebtopSession session;
+            ViewtopSession session;
             lock (mLock)
             {
                 if (!mSessions.TryGetValue(sid, out session))

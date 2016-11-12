@@ -8,7 +8,7 @@
 // Request a draw buffer and image.
 // Call Start to start the request, and use OnDone to retrieve the result.
 //
-function WrvRequest()
+function OvtRequest()
 {
     var THIS = this;
     THIS.SessionId = null;
@@ -39,7 +39,7 @@ function WrvRequest()
         {
             SetError("Image");
         };
-        image.src = "index.wrv?query=image&sid=" + THIS.SessionId + "&seq=" + THIS.Sequence;
+        image.src = "index.ovt?query=image&sid=" + THIS.SessionId + "&seq=" + THIS.Sequence;
 
         // Start downloading the draw buffer
         var xhttp = new XMLHttpRequest();
@@ -55,14 +55,14 @@ function WrvRequest()
             THIS.Draw = this.responseText;
             GotData();
         };
-        xhttp.open("GET", "index.wrv?query=draw&sid=" + THIS.SessionId + "&seq=" + THIS.Sequence + "&" + THIS.DrawOptions, true);
+        xhttp.open("GET", "index.ovt?query=draw&sid=" + THIS.SessionId + "&seq=" + THIS.Sequence + "&" + THIS.DrawOptions, true);
         xhttp.send();
     }
 
     // Set an eror, call OnDone if it hasn't already been called
     function SetError(error)
     {
-        console.log("WrvRequest Error: " + error);
+        console.log("OvtRequest Error: " + error);
 
         if (THIS.Error == null)
         {
@@ -86,7 +86,7 @@ function WrvRequest()
 //
 // Main remote viewer class, used to continuosly update the canvas.
 //
-function WebRemoteViewer(drawString, canvas)
+function Viewtop(drawString, canvas)
 {
     var THIS = this;
     var mDrawString = drawString;
@@ -263,7 +263,7 @@ function WebRemoteViewer(drawString, canvas)
         var sequence = mSequence;
         mSequence = mSequence + 1;
 
-        var request = new WrvRequest();
+        var request = new OvtRequest();
         request.OnDone = function ()
         {
             if (request.Error != null)
@@ -294,7 +294,7 @@ function WebRemoteViewer(drawString, canvas)
             mSessionId = JSON.parse(xhttp.responseText).sid;
             LoadFrame();
         };
-        xhttp.open("GET", "index.wrv?query=startsession&rid=" + (new Date()).getMilliseconds(), true);
+        xhttp.open("GET", "index.ovt?query=startsession&rid=" + (new Date()).getMilliseconds(), true);
         xhttp.send();
     }
 

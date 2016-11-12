@@ -8,7 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Collections.Generic;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     /// <summary>
     /// Serve static files from the given root path. 

@@ -8,7 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 
-namespace Gosub.Webtop
+namespace Gosub.Viewtop
 {
     /// <summary>
     /// Analyze a frame.  Look for un-changed sections, solid colors, duplicates,
