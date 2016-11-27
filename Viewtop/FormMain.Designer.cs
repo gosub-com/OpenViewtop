@@ -30,8 +30,9 @@
         {
             this.buttonStart = new System.Windows.Forms.Button();
             this.buttonStop = new System.Windows.Forms.Button();
-            this.labelLinkToWebSite = new System.Windows.Forms.LinkLabel();
-            this.labelStats = new System.Windows.Forms.Label();
+            this.labelSecureLink = new System.Windows.Forms.LinkLabel();
+            this.checkAllowUnsecure = new System.Windows.Forms.CheckBox();
+            this.labelUnsecureLink = new System.Windows.Forms.LinkLabel();
             this.SuspendLayout();
             // 
             // buttonStart
@@ -54,39 +55,53 @@
             this.buttonStop.UseVisualStyleBackColor = true;
             this.buttonStop.Click += new System.EventHandler(this.buttonStop_Click);
             // 
-            // labelLinkToWebSite
+            // labelSecureLink
             // 
-            this.labelLinkToWebSite.AutoSize = true;
-            this.labelLinkToWebSite.Location = new System.Drawing.Point(222, 17);
-            this.labelLinkToWebSite.Name = "labelLinkToWebSite";
-            this.labelLinkToWebSite.Size = new System.Drawing.Size(103, 13);
-            this.labelLinkToWebSite.TabIndex = 3;
-            this.labelLinkToWebSite.TabStop = true;
-            this.labelLinkToWebSite.Text = "labelLinkToWebSite";
-            this.labelLinkToWebSite.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.labelLinkToWebSite_LinkClicked);
+            this.labelSecureLink.AutoSize = true;
+            this.labelSecureLink.Location = new System.Drawing.Point(12, 61);
+            this.labelSecureLink.Name = "labelSecureLink";
+            this.labelSecureLink.Size = new System.Drawing.Size(83, 13);
+            this.labelSecureLink.TabIndex = 3;
+            this.labelSecureLink.TabStop = true;
+            this.labelSecureLink.Text = "labelSecureLink";
+            this.labelSecureLink.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.labelSecureLink_LinkClicked);
             // 
-            // labelStats
+            // checkAllowUnsecure
             // 
-            this.labelStats.AutoSize = true;
-            this.labelStats.Location = new System.Drawing.Point(222, 42);
-            this.labelStats.Name = "labelStats";
-            this.labelStats.Size = new System.Drawing.Size(53, 13);
-            this.labelStats.TabIndex = 4;
-            this.labelStats.Text = "labelStats";
+            this.checkAllowUnsecure.AutoSize = true;
+            this.checkAllowUnsecure.Location = new System.Drawing.Point(12, 41);
+            this.checkAllowUnsecure.Name = "checkAllowUnsecure";
+            this.checkAllowUnsecure.Size = new System.Drawing.Size(135, 17);
+            this.checkAllowUnsecure.TabIndex = 4;
+            this.checkAllowUnsecure.Text = "Allow unsecure access";
+            this.checkAllowUnsecure.UseVisualStyleBackColor = true;
+            this.checkAllowUnsecure.CheckedChanged += new System.EventHandler(this.checkAllowUnsecure_CheckedChanged);
+            // 
+            // labelUnsecureLink
+            // 
+            this.labelUnsecureLink.AutoSize = true;
+            this.labelUnsecureLink.Location = new System.Drawing.Point(12, 83);
+            this.labelUnsecureLink.Name = "labelUnsecureLink";
+            this.labelUnsecureLink.Size = new System.Drawing.Size(95, 13);
+            this.labelUnsecureLink.TabIndex = 5;
+            this.labelUnsecureLink.TabStop = true;
+            this.labelUnsecureLink.Text = "labelUnsecureLink";
+            this.labelUnsecureLink.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.labelUnsecureLink_LinkClicked);
             // 
             // FormMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(580, 279);
-            this.Controls.Add(this.labelStats);
-            this.Controls.Add(this.labelLinkToWebSite);
+            this.Controls.Add(this.labelUnsecureLink);
+            this.Controls.Add(this.checkAllowUnsecure);
+            this.Controls.Add(this.labelSecureLink);
             this.Controls.Add(this.buttonStop);
             this.Controls.Add(this.buttonStart);
             this.Name = "FormMain";
             this.Text = "Connect";
             this.Load += new System.EventHandler(this.FormMain_Load);
-            this.Shown += new System.EventHandler(this.Jrfb_Shown);
+            this.Shown += new System.EventHandler(this.FormMain_Shown);
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -96,8 +111,9 @@
 
         private System.Windows.Forms.Button buttonStart;
         private System.Windows.Forms.Button buttonStop;
-        private System.Windows.Forms.LinkLabel labelLinkToWebSite;
-        private System.Windows.Forms.Label labelStats;
+        private System.Windows.Forms.LinkLabel labelSecureLink;
+        private System.Windows.Forms.CheckBox checkAllowUnsecure;
+        private System.Windows.Forms.LinkLabel labelUnsecureLink;
     }
 }
 

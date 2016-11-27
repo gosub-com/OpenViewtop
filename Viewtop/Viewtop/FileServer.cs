@@ -23,7 +23,7 @@ namespace Gosub.Viewtop
         static readonly string sPrivateFileName = Path.DirectorySeparatorChar + ".";
 
         HttpListener mListener;
-        string mServerName;
+        string []mServerNames;
         string mRootPath;
         int mRequestCount;
         Dictionary<string, RequestHandler> mExternalRequestHandler = new Dictionary<string, RequestHandler>();
@@ -35,9 +35,9 @@ namespace Gosub.Viewtop
         // that begins with a "." is private and will not be served.
         // (e.g. the file named .passwords will never be served, nor
         // would the file www/.myprivatefiles/private.txt).
-        public FileServer(string serverName, string rootPath)
+        public FileServer(string []serverNames, string rootPath)
         {
-            mServerName = serverName;
+            mServerNames = serverNames;
             mRootPath = rootPath;
         }
 
@@ -54,7 +54,8 @@ namespace Gosub.Viewtop
         {
             Stop();
             mListener = new HttpListener();
-            mListener.Prefixes.Add(mServerName);
+            foreach (var serverName in mServerNames)
+                mListener.Prefixes.Add(serverName);
             mListener.Start();
 
             ThreadPool.QueueUserWorkItem((o) =>
