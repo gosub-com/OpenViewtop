@@ -33,6 +33,7 @@
             this.labelSecureLink = new System.Windows.Forms.LinkLabel();
             this.checkAllowUnsecure = new System.Windows.Forms.CheckBox();
             this.labelUnsecureLink = new System.Windows.Forms.LinkLabel();
+            this.labelLocalIpAddresses = new System.Windows.Forms.Label();
             this.SuspendLayout();
             // 
             // buttonStart
@@ -58,9 +59,10 @@
             // labelSecureLink
             // 
             this.labelSecureLink.AutoSize = true;
-            this.labelSecureLink.Location = new System.Drawing.Point(12, 61);
+            this.labelSecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelSecureLink.Location = new System.Drawing.Point(12, 94);
             this.labelSecureLink.Name = "labelSecureLink";
-            this.labelSecureLink.Size = new System.Drawing.Size(83, 13);
+            this.labelSecureLink.Size = new System.Drawing.Size(109, 17);
             this.labelSecureLink.TabIndex = 3;
             this.labelSecureLink.TabStop = true;
             this.labelSecureLink.Text = "labelSecureLink";
@@ -69,9 +71,10 @@
             // checkAllowUnsecure
             // 
             this.checkAllowUnsecure.AutoSize = true;
-            this.checkAllowUnsecure.Location = new System.Drawing.Point(12, 41);
+            this.checkAllowUnsecure.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.checkAllowUnsecure.Location = new System.Drawing.Point(12, 70);
             this.checkAllowUnsecure.Name = "checkAllowUnsecure";
-            this.checkAllowUnsecure.Size = new System.Drawing.Size(135, 17);
+            this.checkAllowUnsecure.Size = new System.Drawing.Size(170, 21);
             this.checkAllowUnsecure.TabIndex = 4;
             this.checkAllowUnsecure.Text = "Allow unsecure access";
             this.checkAllowUnsecure.UseVisualStyleBackColor = true;
@@ -80,19 +83,31 @@
             // labelUnsecureLink
             // 
             this.labelUnsecureLink.AutoSize = true;
-            this.labelUnsecureLink.Location = new System.Drawing.Point(12, 83);
+            this.labelUnsecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelUnsecureLink.Location = new System.Drawing.Point(12, 120);
             this.labelUnsecureLink.Name = "labelUnsecureLink";
-            this.labelUnsecureLink.Size = new System.Drawing.Size(95, 13);
+            this.labelUnsecureLink.Size = new System.Drawing.Size(125, 17);
             this.labelUnsecureLink.TabIndex = 5;
             this.labelUnsecureLink.TabStop = true;
             this.labelUnsecureLink.Text = "labelUnsecureLink";
             this.labelUnsecureLink.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.labelUnsecureLink_LinkClicked);
+            // 
+            // labelLocalIpAddresses
+            // 
+            this.labelLocalIpAddresses.AutoSize = true;
+            this.labelLocalIpAddresses.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelLocalIpAddresses.Location = new System.Drawing.Point(12, 38);
+            this.labelLocalIpAddresses.Name = "labelLocalIpAddresses";
+            this.labelLocalIpAddresses.Size = new System.Drawing.Size(170, 20);
+            this.labelLocalIpAddresses.TabIndex = 6;
+            this.labelLocalIpAddresses.Text = "labelLocalIpAddresses";
             // 
             // FormMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(580, 279);
+            this.Controls.Add(this.labelLocalIpAddresses);
             this.Controls.Add(this.labelUnsecureLink);
             this.Controls.Add(this.checkAllowUnsecure);
             this.Controls.Add(this.labelSecureLink);
@@ -114,6 +129,7 @@
         private System.Windows.Forms.LinkLabel labelSecureLink;
         private System.Windows.Forms.CheckBox checkAllowUnsecure;
         private System.Windows.Forms.LinkLabel labelUnsecureLink;
+        private System.Windows.Forms.Label labelLocalIpAddresses;
     }
 }
 

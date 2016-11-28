@@ -9,8 +9,8 @@ using System.Security.Cryptography.X509Certificates;
 using System.Diagnostics;
 using System.Reflection;
 using System.Security.Principal;
-using System.Security.Permissions;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 
 namespace Gosub.Viewtop
 {
@@ -35,6 +35,7 @@ namespace Gosub.Viewtop
             labelSecureLink.Enabled = false;
             labelUnsecureLink.Text = "Web server stopped";
             labelUnsecureLink.Enabled = false;
+            labelLocalIpAddresses.Text = "";
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
@@ -85,6 +86,8 @@ namespace Gosub.Viewtop
 
         void StartWebServer()
         {
+            labelLocalIpAddresses.Text = "";
+
             if (!IsAdministrator())
             {
                 MessageBox.Show(this, "Error: This application requires administrator privileges", "Viewtop");
@@ -136,6 +139,29 @@ namespace Gosub.Viewtop
 
             buttonStop.Enabled = true;
             buttonStart.Enabled = false;
+
+            // Show local IP addresses
+            string ipAddresses = "";
+            foreach (var nif in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nif.OperationalStatus != OperationalStatus.Up)
+                    continue;
+                foreach (var ip in nif.GetIPProperties().UnicastAddresses)
+                {
+                    if (ip.Address.AddressFamily == AddressFamily.InterNetworkV6)
+                        continue;
+                    if (ip.Address.ToString() == "127.0.0.1")
+                        continue;
+                    if (ipAddresses != "")
+                        ipAddresses += ",  ";
+                    ipAddresses += ip.Address;
+                }
+            }
+            if (ipAddresses == "")
+                ipAddresses = "No local IP addresses found";
+            else
+                ipAddresses = "Local IP address: " + ipAddresses;
+            labelLocalIpAddresses.Text = ipAddresses;
         }
 
         void StopWebServer()
