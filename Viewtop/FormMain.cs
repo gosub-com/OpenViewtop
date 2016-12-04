@@ -9,6 +9,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Diagnostics;
 using System.Reflection;
 using System.Security.Principal;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 
@@ -31,21 +32,11 @@ namespace Gosub.Viewtop
 
         private void FormMain_Load(object sender, EventArgs e)
         {
-            labelSecureLink.Text = "Web Server stopped";
-            labelSecureLink.Enabled = false;
-            labelUnsecureLink.Text = "Web server stopped";
-            labelUnsecureLink.Enabled = false;
-            labelLocalIpAddresses.Text = "";
+            StopWebServer();
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
         {
-            StartWebServer();
-        }
-
-        private void checkAllowUnsecure_CheckedChanged(object sender, EventArgs e)
-        {
-            StopWebServer();
             StartWebServer();
         }
 
@@ -71,37 +62,25 @@ namespace Gosub.Viewtop
                 Process.Start(e.Link.LinkData.ToString());
         }
 
-        public static bool IsAdministrator()
-        {
-            try
-            {
-                return (new WindowsPrincipal(WindowsIdentity.GetCurrent()))
-                        .IsInRole(WindowsBuiltInRole.Administrator);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         void StartWebServer()
         {
-            labelLocalIpAddresses.Text = "";
-
-            if (!IsAdministrator())
-            {
-                MessageBox.Show(this, "Error: This application requires administrator privileges", "Viewtop");
-                Application.Exit();
-                return;
-            }
 
             if (mFileServer != null)
                 mFileServer.Stop();
 
+            // Get machine name
+            string machineName = "";
+            try { machineName = Dns.GetHostName(); }
+            catch { }
+            if (machineName.Trim() == "")
+                machineName = "localhost";
+
+            labelSecureLink.Text = "Starting...";
+            Refresh();
+
             var httpPrefixes = new List<string>();
             httpPrefixes.Add("https://*:" + HTTPS_PORT + "/");
-            if (checkAllowUnsecure.Checked)
-                httpPrefixes.Add("http://*:" + HTTP_PORT + "/" );
+            httpPrefixes.Add("http://*:" + HTTP_PORT + "/" );
 
             SetupSecurePort(HTTPS_PORT);
 
@@ -120,48 +99,26 @@ namespace Gosub.Viewtop
             {
                 mFileServer = null;
                 MessageBox.Show(this, "Error starting web server: " + ex.Message);
+                labelSecureLink.Text = "Error starting server";
                 return;
             }
-
-            string link = "https://localhost:" + HTTPS_PORT + "/";
-            string text = "Secure web server: ";
+            string link = "https://" + machineName + ":" + HTTPS_PORT + "/";
+            string text = "Secure: ";
             labelSecureLink.Text = text + link;
             labelSecureLink.Links.Clear();
             labelSecureLink.Links.Add(text.Length, link.Length, link);
             labelSecureLink.Enabled = true;
 
-            link = "http://localhost:" + HTTP_PORT + "/";
-            text = "Unsecure web server: ";
+            link = "http://" + machineName + ":" + HTTP_PORT + "/";
+            text = "Unsecure: ";
             labelUnsecureLink.Text = text + link;
             labelUnsecureLink.Links.Clear();
             labelUnsecureLink.Links.Add(text.Length, link.Length, link);
-            labelUnsecureLink.Enabled = checkAllowUnsecure.Checked;
+            labelUnsecureLink.Visible = true;
 
             buttonStop.Enabled = true;
             buttonStart.Enabled = false;
 
-            // Show local IP addresses
-            string ipAddresses = "";
-            foreach (var nif in NetworkInterface.GetAllNetworkInterfaces())
-            {
-                if (nif.OperationalStatus != OperationalStatus.Up)
-                    continue;
-                foreach (var ip in nif.GetIPProperties().UnicastAddresses)
-                {
-                    if (ip.Address.AddressFamily == AddressFamily.InterNetworkV6)
-                        continue;
-                    if (ip.Address.ToString() == "127.0.0.1")
-                        continue;
-                    if (ipAddresses != "")
-                        ipAddresses += ",  ";
-                    ipAddresses += ip.Address;
-                }
-            }
-            if (ipAddresses == "")
-                ipAddresses = "No local IP addresses found";
-            else
-                ipAddresses = "Local IP address: " + ipAddresses;
-            labelLocalIpAddresses.Text = ipAddresses;
         }
 
         void StopWebServer()
@@ -176,7 +133,7 @@ namespace Gosub.Viewtop
             labelSecureLink.Text = "Web Server stopped";
             labelSecureLink.Enabled = false;
             labelUnsecureLink.Text = "Web server stopped";
-            labelUnsecureLink.Enabled = false;
+            labelUnsecureLink.Visible = false;
 
             buttonStop.Enabled = false;
             buttonStart.Enabled = true;
@@ -233,13 +190,32 @@ namespace Gosub.Viewtop
                 p2.WaitForExit();
 
                 if (p1.ExitCode != 0)
-                    throw new Exception("Could add SSL certificate to the port: " + p1.StandardOutput.ReadToEnd());
+                    throw new Exception("Could not add SSL certificate to the port: " + p1.StandardOutput.ReadToEnd());
                 if (p2.ExitCode != 0)
-                    throw new Exception("Could add SSL certificate to the port: " + p2.StandardOutput.ReadToEnd());
+                    throw new Exception("Could not add SSL certificate to the port: " + p2.StandardOutput.ReadToEnd());
+
+                if (!IsAdministrator())
+                {
+                    MessageBox.Show(this, "WARNING:  Secure communications (i.e. HTTPS) may not work because this application does not have administrator privileges.", "Viewtop");
+                }
+
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this, "Error setting up secure link.  Your HTTPS connection may not work.  \r\n\r\n" + ex.Message, "Viewtop");
+            }
+        }
+
+        public static bool IsAdministrator()
+        {
+            try
+            {
+                return (new WindowsPrincipal(WindowsIdentity.GetCurrent()))
+                        .IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                return false;
             }
         }
 

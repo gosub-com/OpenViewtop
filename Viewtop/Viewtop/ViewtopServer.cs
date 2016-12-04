@@ -48,7 +48,8 @@ namespace Gosub.Viewtop
                     newSession.LastRequestTime = DateTime.Now;
                     mSessions[mSessionId++] = newSession;
                 }
-                FileServer.SendResponse(response, @"{""sid"": " + newSession.SessionId + "}", 200);
+                FileServer.SendResponse(response, 
+                    @"{""sid"": " + newSession.SessionId + @",""challenge"":" + newSession.Challenge + "}", 200);
                 return;
             }
 

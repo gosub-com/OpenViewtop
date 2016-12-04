@@ -17,8 +17,10 @@ namespace Gosub.Viewtop
 
         public int SessionId { get; }
         public DateTime LastRequestTime { get; set; }
+        public string Challenge { get; } = DateTime.Now.Ticks.ToString();
 
         object mLock = new object();
+        bool mAuthenticated;
         long mSequence;
         Dictionary<long, FrameInfo> mHistory = new Dictionary<long, FrameInfo>();
         FrameCollector mCollector;
@@ -57,6 +59,25 @@ namespace Gosub.Viewtop
             string sequenceStr = request.QueryString["seq"];
             string query = request.QueryString["query"];
 
+            if (query == "login")
+            {
+                // TBD: Authenticate by reading password file
+                string username = request.QueryString["username"];
+                string password = request.QueryString["password"];
+                if (username != null && password != null)
+                    mAuthenticated = username.ToLower() == "jms" && password == "12345";
+                FileServer.SendResponse(response, @"{""pass"": " + mAuthenticated.ToString().ToLower() + "}", 200);
+                return;
+            }
+
+            // --- Everything below this requires authentication ---
+            if (!mAuthenticated)
+            {
+                FileServer.SendError(response, "Query 'seq' must be numeric", 401);
+                return;
+            }
+
+            // --- Everything below this requires a sequence number
             long sequence;
             if (sequenceStr == null || !long.TryParse(sequenceStr, out sequence))
             {

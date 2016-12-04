@@ -5,64 +5,131 @@
     <script type="text/javascript" src="Viewtop.js"></script>
 </head>
 <body>
-    <table>
-        <tr>
-        <td><a href="http://gosub.com" target="_blank"><img src="GosubLogo.png" alt="Gosub" /> </a></td>
-        <td><h1><a href="http://gosub.com" target="_blank">Open Viewtop</a></h1></td>
-        </tr>
-    </table>
-    <canvas width="1200" height="600" id="canvas2">Canvas not available.  Please upgrade your browser.</canvas>
-    <br />
-    <table>
-        <tr>
-            <td>
-                <label><input type="checkbox" id="checkDoNotScale" onchange="UpdateOptions()">Actual screen size</label>
-                <br />
-                <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Full frame analysis (disable delta)</label>
-                <br /> <br />
-                <label><input type="radio" name="compression" id="radioSmartPng" checked="checked" onchange="UpdateOptions()">Smart PNG</label>
-                <br />
-                <label><input type="radio" name="compression" id="radioJpg" onchange="UpdateOptions()">Compress JPG</label>
-                <br />
-                <label><input type="radio" name="compression" id="radioPng" onchange="UpdateOptions()">Compress PNG</label>
-                <br />
-            </td>
-            <td>
-                <label><input type="radio" name="output" id="radioNormal" checked="checked" onchange="UpdateOptions()">Normal</label>
-                <br />
-                <label><input type="radio" name="output" id="radioFullFrameJpg" onchange="UpdateOptions()">Full frame JPG</label>
-                <br />
-                <label><input type="radio" name="output" id="radioFullFramePng" onchange="UpdateOptions()">Full frame PNG</label>
-                <br />
-                <label><input type="radio" name="output" id="radioCompressionMap" onchange="UpdateOptions()">Compression map</label>
-                <br />
-                <label><input type="radio" name="output" id="radioHideJpg" onchange="UpdateOptions()">Hide JPG</label>
-                <br />
-                <label><input type="radio" name="output" id="radioHidePng" onchange="UpdateOptions()">Hide PNG</label>
-                <br />
-            </td>
-            <td>
-                <p id="drawString2">Draw string</p>
-            </td>
-        </tr>
-    </table>
+    <!-- Login form -->
+    <div id="remoteLoginPageId">
+        <h1>Welcome to Open Viewtop</h1>
+        <h3>Log in to ComputerName</h3>
+        <div style="display:inline-block;margin-right:10px;">
+            <div><b>Username: </b></div>
+            <input id="usernameId" type="text" placeholder="Enter Username" name="uname" autofocus
+                   onkeypress="Javascript: if (event.keyCode == 13) document.getElementById('passwordId').focus();">
+        </div>
+        <div style="display:inline-block;margin-right:10px;">
+            <div><b>Password: </b></div>
+            <input id="passwordId" type="password" placeholder="Enter Password" name="password"
+                   onkeypress="Javascript: if (event.keyCode == 13) login();">            
+        </div>
+        <div style="display:inline-block">
+            <button type="button" onclick="login()">Log In</button>
+        </div>
+        <div id="errorMessageId" style="display:none;">
+            Message
+        </div>
+        <div id="unsecureWarningId" style="display:none;">
+            <b style="color:red;">Warning:</b> This connection is running over HTTP and is unsecure
+        </div>
+    </div>
+
+    <div id="remoteConnectedPageId" style="display:none" >
+        
+        <!-- Top connected bar -->
+        <div style="margin: 0px 0px 2px 0px;">
+            <button type="button" onclick="logout()">Log Out</button>
+            Connected to <b>ComputerName</b>
+        </div>
+
+        <!-- Main Screen-->
+        <canvas id="remoteCanvasId" width="1200" height="600">Canvas not available.  Please upgrade your browser.</canvas>
+
+        <!-- Stats and options -->
+        <table id="remoteOptionsId" style="display:none">
+            <tr>
+                <td>
+                    <label><input type="checkbox" id="checkDoNotScale" onchange="UpdateOptions()">Actual screen size</label>
+                    <br />
+                    <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Full frame analysis (disable delta)</label>
+                    <br /> <br />
+                    <label><input type="radio" name="compression" id="radioSmartPng" checked="checked" onchange="UpdateOptions()">Smart PNG</label>
+                    <br />
+                    <label><input type="radio" name="compression" id="radioJpg" onchange="UpdateOptions()">Compress JPG</label>
+                    <br />
+                    <label><input type="radio" name="compression" id="radioPng" onchange="UpdateOptions()">Compress PNG</label>
+                    <br />
+                </td>
+                <td>
+                    <label><input type="radio" name="output" id="radioNormal" checked="checked" onchange="UpdateOptions()">Normal</label>
+                    <br />
+                    <label><input type="radio" name="output" id="radioFullFrameJpg" onchange="UpdateOptions()">Full frame JPG</label>
+                    <br />
+                    <label><input type="radio" name="output" id="radioFullFramePng" onchange="UpdateOptions()">Full frame PNG</label>
+                    <br />
+                    <label><input type="radio" name="output" id="radioCompressionMap" onchange="UpdateOptions()">Compression map</label>
+                    <br />
+                    <label><input type="radio" name="output" id="radioHideJpg" onchange="UpdateOptions()">Hide JPG</label>
+                    <br />
+                    <label><input type="radio" name="output" id="radioHidePng" onchange="UpdateOptions()">Hide PNG</label>
+                    <br />
+                </td>
+                <td>
+                    <p id="remoteStatsId">Draw string</p>
+                </td>
+            </tr>
+        </table>
+    </div>
 </body>
 </html>
 
 <script>
 
-    // Start the remote viewer
-    var viewer = new Viewtop(document.getElementById('drawString2'), document.getElementById('canvas2'));
-    UpdateOptions();
-    viewer.Start();
+    var mViewer = null;
+    var mRemoteLoginPage = document.getElementById('remoteLoginPageId');
+    var mRemoteConnectedPage = document.getElementById('remoteConnectedPageId');
+    var mRemoteCanvas = document.getElementById('remoteCanvasId');
+    var mRemoteOptions = document.getElementById('remoteOptionsId');
+    var mRemoteStats = document.getElementById('remoteStatsId');
+    var mUsername = document.getElementById('usernameId');
+    var mPassword = document.getElementById('passwordId');
+    var mErrorMessage = document.getElementById('errorMessageId');
+    
+    document.getElementById('unsecureWarningId').style.display = location.protocol === "https:" ? "none" : "block";
+
+    // Called when the user clicks the login button
+    function login()
+    {
+        logout();
+
+        mRemoteLoginPage.style.display = "none";
+        mRemoteConnectedPage.style.display = "block";
+
+        mViewer = new Viewtop(mRemoteStats, mRemoteCanvas);
+        mViewer.ErrorCallback = function(errorMessage)
+        {
+            logout();
+            mErrorMessage.innerHTML = "<b>ERROR:</b> " + errorMessage;
+            mErrorMessage.style.display = "block";
+        }
+        UpdateOptions();
+        mViewer.Start(mUsername.value, mPassword.value);
+    }
+
+    function logout()
+    {
+        if (mViewer != null)
+            mViewer.Stop();
+        mViewer = null;
+        mRemoteLoginPage.style.display = "block";
+        mRemoteConnectedPage.style.display = "none";
+        mErrorMessage.style.display = "none";
+        mUsername.focus();
+    }
 
     function UpdateOptions()
     {
         // Check boxes
         var options = "&";
         if (!document.getElementById('checkDoNotScale').checked)
-            options += "maxwidth=" + document.getElementById('canvas2').width
-                       + "&maxheight=" + document.getElementById('canvas2').height + "&";
+            options += "maxwidth=" + mRemoteCanvas.width
+                       + "&maxheight=" + mRemoteCanvas.height + "&";
         if (document.getElementById('checkFullFrame').checked)
             options += "fullframe=true&";
 
@@ -86,7 +153,7 @@
         else if (document.getElementById('radioHidePng').checked)
             options += "output=HidePng&";
 
-        viewer.DrawOptions = options;
+        mViewer.DrawOptions = options;
         console.log("Options=" + options);
     }
 

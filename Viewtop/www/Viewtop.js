@@ -93,7 +93,11 @@ function Viewtop(drawString, canvas)
     var mCanvas = canvas;
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
+    var mSessionChallenge = "";
     var mSequence = 1;
+    var mRunning = false;
+    var mUsername = "";
+    var mPassword = "";
 
     // Set draw options (each separated by '&')
     THIS.DrawOptions = "";
@@ -108,15 +112,16 @@ function Viewtop(drawString, canvas)
         mContext.fillText('Starting...', 10, mCanvas.height / 2 - 15);
     }
 
-    function ShowError(error)
+    function ShowError(errorMessage)
     {
-        mDrawString.innerHTML = 'ERROR: ' + error;
-
+        mDrawString.innerHTML = 'ERROR: ' + errorMessage;
         mContext.fillStyle = '#000';
         mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
         mContext.font = '26px sans-serif';
         mContext.fillStyle = '#88F';
-        mContext.fillText('ERROR: ' + error, 15, 25);
+        mContext.fillText('ERROR: ' + errorMessage, 15, 25);
+        THIS.ErrorCallback(errorMessage);
+        mRunning = false;
     }
 
     function DrawFrame(sequence, source, drawBuffer)
@@ -245,17 +250,17 @@ function Viewtop(drawString, canvas)
                 break;
             }
         }
-
         var stats = drawBuffer.Stats;
         stats.DrawTime = new Date().getMilliseconds() - startTime;
         var statsStr = "";
-        for (var key in stats) {
-            if (stats.hasOwnProperty(key)) {
+        for (var key in stats)
+        {
+            if (stats.hasOwnProperty(key))
+            {
                 statsStr += key + ": " + stats[key] + "<br>";
             }
         }
         mDrawString.innerHTML = statsStr;
-
     }
 
     function LoadFrame()
@@ -264,8 +269,11 @@ function Viewtop(drawString, canvas)
         mSequence = mSequence + 1;
 
         var request = new OvtRequest();
+        request.Start(mSessionId, sequence, THIS.DrawOptions);
         request.OnDone = function ()
         {
+            if (!mRunning)
+                return;
             if (request.Error != null)
             {
                 console.log("Error loading frame " + request.Sequence + ": " + request.Error);
@@ -275,33 +283,75 @@ function Viewtop(drawString, canvas)
             DrawFrame(sequence, this.Image, JSON.parse(this.Draw));
             LoadFrame();
         };
-        request.Start(mSessionId, sequence, THIS.DrawOptions);
-        console.log("LoadFrame EXIT: " + sequence);
+    }
+
+    function HttpRequestDone(request, errorMessage)
+    {
+        if (!mRunning)
+            return false;
+        if (request.readyState != 4)
+            return false;
+        if (request.status != 200)
+        {
+            ShowError(errorMessage);
+            return false;
+        }
+        return true;
+    }
+
+    function Login()
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.open("GET", "index.ovt?query=login&sid=" + mSessionId
+            + "&username=" + mUsername + "&password=" + mPassword, true);
+        xhttp.send();
+        xhttp.onreadystatechange = function ()
+        {
+            if (!HttpRequestDone(this, "Login request failed"))
+                return;
+            var loginInfo = JSON.parse(xhttp.responseText);
+            if (!loginInfo.pass)
+            {
+                ShowError("Invalid user name or password");
+                return;
+            }
+            LoadFrame();
+        };
     }
 
     function StartSession()
     {
         var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function ()
-        {
-            if (this.readyState != 4)
-                return;
-            if (this.status != 200)
-            {
-                ShowError("Starting session");
-                return;
-            }
-            mSessionId = JSON.parse(xhttp.responseText).sid;
-            LoadFrame();
-        };
         xhttp.open("GET", "index.ovt?query=startsession&rid=" + (new Date()).getMilliseconds(), true);
         xhttp.send();
+        xhttp.onreadystatechange = function ()
+        {
+            if (!HttpRequestDone(this, "Start session request failed"))
+                return;
+            var sessionInfo = JSON.parse(xhttp.responseText);
+            mSessionId = sessionInfo.sid;
+            mSessionChallenge = sessionInfo.challenge;
+            Login();
+        };
     }
 
-    THIS.Start = function ()
+    THIS.Start = function (username, password)
     {
+        mUsername = username;
+        mPassword = password;
+        mRunning = true;
         InitializeCanvas();
-        StartSession();
+        StartSession(username, password);
+    }
+
+    THIS.Stop = function()
+    {
+        mRunning = false;
+    }
+
+    THIS.ErrorCallback = function(errorMessage)
+    {
+
     }
 }
 
