@@ -28,9 +28,9 @@ namespace Gosub.Viewtop
 
         class FrameInfo
         {
-            public string Draw;
-            public byte[] Image;
+            // NOTE: Do not change names - they are converted to JSON and sent to client
             public Stats Stats;
+            public List<FrameCompressor.Frame> Frames = new List<FrameCompressor.Frame>();
         }
         
         class Stats
@@ -85,23 +85,11 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            // Get the next image or timeout
-            if (query == "image")
-            {
-                string draw;
-                byte[] image;
-                if (WaitForImageOrTimeout(sequence, out draw, out image, null))
-                    FileServer.SendResponse(response, image, 200);
-                else
-                    FileServer.SendError(response, "Error retrieving image frame " + sequence, 400);
-                return;
-            }
             if (query == "draw")
             {
-                string draw;
-                byte[] image;
-                if (WaitForImageOrTimeout(sequence, out draw, out image, request.QueryString))
-                    FileServer.SendResponse(response, draw, 200);
+                FrameInfo frame;
+                if (WaitForImageOrTimeout(sequence, out frame, request.QueryString))
+                    FileServer.SendResponse(response, JsonConvert.SerializeObject(frame), 200);
                 else
                     FileServer.SendError(response, "Error retrieving draw frame " + sequence, 400);
                 return;
@@ -113,11 +101,8 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Retrieve the requested frame
         /// </summary>
-        bool WaitForImageOrTimeout(long sequence, out string draw, out byte[] image, NameValueCollection drawOptions)
+        bool WaitForImageOrTimeout(long sequence, out FrameInfo frame, NameValueCollection drawOptions)
         {
-            draw = null;
-            image = null;
-
             // If a future frame is receivied, wait for it or timeout.
             // NOTE: Javascript doesn't queue future frames, but it will eventually
             DateTime now = DateTime.Now;
@@ -125,15 +110,12 @@ namespace Gosub.Viewtop
             {
                 lock (mLock)
                 {
-                    // Return old frames from history (or new image frames)
-                    FrameInfo frameInfo;
-                    if (mHistory.TryGetValue(sequence, out frameInfo))
+                    // Return old frames from history
+                    if (mHistory.TryGetValue(sequence, out frame))
                     {
-                        draw = frameInfo.Draw;
-                        image = frameInfo.Image;
                         return true;
                     }
-                    // Break to allow draw frames to be processed
+                    // Break to allow the current frame to be processed
                     if (drawOptions != null && sequence <= mSequence + 1)
                         break;
                 }
@@ -143,10 +125,10 @@ namespace Gosub.Viewtop
                 Thread.Sleep(10);
             }
 
-            // Collect a new draw frame, future frames and image frames are queued above
+            // Collect a new frame.  Future frames and image frames are queued above
             lock (mLock)
             {
-                // Image frames blocked above until we have the data
+                // Frames are blocked above until we have the data
                 Debug.Assert(drawOptions != null);
 
                 // Generate an error for very old frames
@@ -208,14 +190,15 @@ namespace Gosub.Viewtop
                 else
                     mAnalyzer.Output = FrameCompressor.OutputType.Normal;
 
-
                 // Collect the frame
                 var bm = mCollector.CreateFrame(maxWidth, maxHeight);
                 var compressStartTime = DateTime.Now;
                 var frames = mAnalyzer.Compress(bm);
+                Debug.Assert(frames.Length != 0);
                 bm.Dispose();
                 var compressTime = DateTime.Now - compressStartTime;
 
+                // Generate stats
                 Stats stats = new Stats();
                 stats.CopyTime = (int)mCollector.CopyTime.TotalMilliseconds;
                 stats.ShrinkTime = (int)mCollector.ShrinkTime.TotalMilliseconds;
@@ -223,25 +206,17 @@ namespace Gosub.Viewtop
                 stats.Duplicates = mAnalyzer.Duplicates;
                 stats.Collisions = mAnalyzer.HashCollisionsEver;
                 int size = 0;
-                foreach (var frame in frames)
-                    size += frame.Draw.Length + frame.Image.Length;
+                foreach (var compressorFrame in frames)
+                    size += compressorFrame.Draw.Length + compressorFrame.Image.Length;
                 stats.Size = "" + size/1000 + "Kb";
 
-                // Generate the image draw JSON
-                for (int i = 0;  i < frames.Length;  i++)
-                {
-                    var frame = new FrameInfo();
-                    frame.Stats = stats;
-                    frame.Draw = frames[i].Draw;
-                    frame.Draw = JsonConvert.SerializeObject(frame); // replace draw buffer with JSON
-                    frame.Image = frames[i].Image;
-                    mHistory[sequence + i] = frame;
-                }
-                Debug.Assert(frames.Length != 0);
-                mSequence += frames.Length;
-
-                image = mHistory[sequence].Image;
-                draw = mHistory[sequence].Draw;
+                // Generate the frame buffer
+                frame = new FrameInfo();
+                frame.Stats = stats;
+                foreach (var compressorFrame in frames)
+                    frame.Frames.Add(compressorFrame);
+                mHistory[sequence] = frame;
+                mSequence++;
                 return true;
             }
         }

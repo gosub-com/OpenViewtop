@@ -105,9 +105,23 @@ namespace Gosub.Viewtop
 
         public class Frame
         {
+            // NOTE: Do not change names - they are converted to JSON and sent to client
             public string Draw;
-            public byte[] Image;
-            public Frame(string draw, byte []image) { Draw = draw;  Image = image; }
+            public string Image;
+
+            public Frame(string draw, string image)
+            {
+                Draw = draw;
+                Image = image;
+            }
+
+            public Frame(string draw, MemoryStream image, ImageFormat format)
+            {
+                Image = (format == ImageFormat.Png ? "data:image/png;base64," : "data:image/jpeg;base64,")
+                    + Convert.ToBase64String(image.GetBuffer(), 0, (int)image.Length);
+                Draw = draw;
+            }
+
         }
 
         /// <summary>
@@ -324,9 +338,7 @@ namespace Gosub.Viewtop
             var targetStream = new MemoryStream();
             bmTarget.Save(targetStream, format);
             bmTarget.Dispose();
-            if (targetStream.GetBuffer().Length == targetStream.Length)
-                return new Frame(blockWriter.GetDrawString(), targetStream.GetBuffer());
-            return new Frame(blockWriter.GetDrawString(), targetStream.ToArray());
+            return new Frame(blockWriter.GetDrawString(), targetStream, format);
         }
 
         /// <summary>
@@ -352,9 +364,7 @@ namespace Gosub.Viewtop
         {
             var ms = new MemoryStream();
             frame.Save(ms, format);
-            if (ms.GetBuffer().Length == ms.Length)
-                return new Frame("!", ms.GetBuffer());
-            return new Frame("!", ms.ToArray());
+            return new Frame("!", ms, format);
         }
 
         private Bitmap GenerateCompressionMap(int width, int height, List<Block> blocks)

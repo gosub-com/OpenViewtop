@@ -5,85 +5,6 @@
 "use strict"
 
 //
-// Request a draw buffer and image.
-// Call Start to start the request, and use OnDone to retrieve the result.
-//
-function OvtRequest()
-{
-    var THIS = this;
-    THIS.SessionId = null;
-    THIS.Sequence = null;
-    THIS.Image = null;
-    THIS.Draw = null;
-    THIS.Error = null;
-    THIS.DrawOptions = "";
-
-    // Called when Image and Draw have loaded (Error is null if everything is OK)
-    THIS.OnDone = function () { }
-
-    // Start downloading the sequence (OnDone is called when done or there is an error)
-    THIS.Start = function (sessionId, sequence, drawOptions)
-    {
-        THIS.SessionId = sessionId;
-        THIS.Sequence = sequence;
-        THIS.DrawOptions = drawOptions;
-
-        // Start downloading the image
-        var image = new Image();
-        image.onload = function ()
-        {
-            THIS.Image = image;
-            GotData();
-        };
-        image.onerror = function ()
-        {
-            SetError("Image");
-        };
-        image.src = "index.ovt?query=image&sid=" + THIS.SessionId + "&seq=" + THIS.Sequence;
-
-        // Start downloading the draw buffer
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function ()
-        {
-            if (this.readyState != 4)
-                return;
-            if (this.status != 200)
-            {
-                SetError("Draw buffer");
-                return;
-            }
-            THIS.Draw = this.responseText;
-            GotData();
-        };
-        xhttp.open("GET", "index.ovt?query=draw&sid=" + THIS.SessionId + "&seq=" + THIS.Sequence + "&" + THIS.DrawOptions, true);
-        xhttp.send();
-    }
-
-    // Set an eror, call OnDone if it hasn't already been called
-    function SetError(error)
-    {
-        console.log("OvtRequest Error: " + error);
-
-        if (THIS.Error == null)
-        {
-            THIS.Error = error;
-            THIS.Image = null;
-            THIS.Draw = null;
-            THIS.OnDone();
-        }
-    }
-
-    // Call OnDone if we have the image and draw buffer and there is no error
-    function GotData()
-    {
-        if (THIS.Image != null && THIS.Draw != null && THIS.Error == null)
-        {
-            THIS.OnDone();
-        }
-    }
-}
-
-//
 // Main remote viewer class, used to continuosly update the canvas.
 //
 function Viewtop(drawString, canvas)
@@ -101,6 +22,160 @@ function Viewtop(drawString, canvas)
 
     // Set draw options (each separated by '&')
     THIS.DrawOptions = "";
+
+    // Start the session
+    THIS.Start = function (username, password)
+    {
+        mUsername = username;
+        mPassword = password;
+        mRunning = true;
+        InitializeCanvas();
+        StartSession(username, password);
+    }
+
+    // Stop the session
+    THIS.Stop = function()
+    {
+        mRunning = false;
+    }
+
+    // Called when the session ends because of an error
+    THIS.ErrorCallback = function(errorMessage)
+    {
+    }
+
+    function StartSession()
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.open("GET", "index.ovt?query=startsession&rid=" + (new Date()).getMilliseconds(), true);
+        xhttp.send();
+        xhttp.onreadystatechange = function ()
+        {
+            if (!HttpRequestDone(this, "Start session request failed"))
+                return;
+            var sessionInfo = JSON.parse(xhttp.responseText);
+            mSessionId = sessionInfo.sid;
+            mSessionChallenge = sessionInfo.challenge;
+            Login();
+        };
+    }
+
+    function Login()
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.open("GET", "index.ovt?query=login&sid=" + mSessionId
+            + "&username=" + mUsername + "&password=" + mPassword, true);
+        xhttp.send();
+        xhttp.onreadystatechange = function ()
+        {
+            if (!HttpRequestDone(this, "Login request failed"))
+                return;
+            var loginInfo = JSON.parse(xhttp.responseText);
+            if (!loginInfo.pass)
+            {
+                ShowError("Invalid user name or password");
+                return;
+            }
+            LoadFrame();
+        };
+    }
+
+    function LoadFrame()
+    {
+        var sequence = mSequence;
+        mSequence = mSequence + 1;
+
+        // Start downloading the draw buffer
+
+        var xhttp = new XMLHttpRequest();
+        xhttp.open("GET", "index.ovt?query=draw&sid=" + mSessionId + "&seq=" + sequence + "&" + THIS.DrawOptions, true);
+        xhttp.send();
+        xhttp.onreadystatechange = function ()
+        {
+            if (!HttpRequestDone(this, "Frame request failed"))
+                return;
+
+            var startTime = new Date().getMilliseconds();
+            var drawBuffer = JSON.parse(xhttp.responseText);
+            drawBuffer.DrawStartTime = startTime;
+
+            LoadImagesThenDraw(drawBuffer);
+        };        
+    }
+
+    // Load all the images in parallel, then draw them
+    function LoadImagesThenDraw(drawBuffer)
+    {
+        var frames = drawBuffer.Frames;
+        
+        if (frames.length == 0)
+        {
+            DrawImagesThenLoadNextFrame(drawBuffer);
+            return;
+        }
+
+        // Load images, issue draw after all of them have loaded
+        var totalImagesLoaded = 0;
+        for (var i = 0; i < frames.length; i++)
+        {
+            var image = new Image();
+            image.onload = ScopeServer(i, image, function(i, image)
+            {
+                frames[i].LoadedImage = image;
+
+                // The the images after they are all loaded
+                if (++totalImagesLoaded == frames.length)
+                    DrawImagesThenLoadNextFrame(drawBuffer);
+            });
+            image.onerror = function ()
+            {
+                ShowError("Error decoding image");
+            };
+            image.src = frames[i].Image;
+        }
+    }
+
+    // Scope server to capture two local parameters
+    // See http://www.howtocreate.co.uk/referencedvariables.html 
+    // for details on why this is necessary
+    function ScopeServer(param1, param2, f)
+    {
+        return function () { return f(param1, param2); }
+    }
+
+    function DrawImagesThenLoadNextFrame(drawBuffer)
+    {
+        // We can issue the load before drawing since it won't run until this exits
+        LoadFrame();
+
+        // Draw frames
+        var frames = drawBuffer.Frames;
+        for (var i = 0; i < frames.length; i++)
+            DrawFrame(frames[i].LoadedImage, frames[i].Draw);
+
+        // Show stats
+        var stats = drawBuffer.Stats;
+        stats.DrawTime = new Date().getMilliseconds() - drawBuffer.DrawStartTime;
+        var statsStr = "";
+        for (var key in stats)
+            if (stats.hasOwnProperty(key))
+                statsStr += key + ": " + stats[key] + "<br>";
+        mDrawString.innerHTML = statsStr;
+    }
+
+    function HttpRequestDone(request, errorMessage)
+    {
+        if (!mRunning)
+            return false;
+        if (request.readyState != 4)
+            return false;
+        if (request.status != 200)
+        {
+            ShowError(errorMessage);
+            return false;
+        }
+        return true;
+    }
 
     function InitializeCanvas()
     {
@@ -123,12 +198,21 @@ function Viewtop(drawString, canvas)
         THIS.ErrorCallback(errorMessage);
         mRunning = false;
     }
-
-    function DrawFrame(sequence, source, drawBuffer)
+    function ShowMessage(errorMessage)
     {
-        var startTime = new Date().getMilliseconds();
+        mContext.fillStyle = '#000';
+        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
+        mContext.font = '26px sans-serif';
+        mContext.fillStyle = '#88F';
+        mContext.fillText('MSG: ' + errorMessage, 15, 25);
+    }
 
-        var draw = drawBuffer.Draw;
+    // Draw an image using a draw string, which is a list of single character
+    // commands optionally followed by a number.  Example, when draw is:
+    //      "x1680y1050C6930"
+    // It sets target screen size to 1680x1050 and copies the entire source
+    function DrawFrame(source, draw)
+    {
         mContext.fillStyle = '#000';
 
         var targetWidth = 0;
@@ -250,108 +334,7 @@ function Viewtop(drawString, canvas)
                 break;
             }
         }
-        var stats = drawBuffer.Stats;
-        stats.DrawTime = new Date().getMilliseconds() - startTime;
-        var statsStr = "";
-        for (var key in stats)
-        {
-            if (stats.hasOwnProperty(key))
-            {
-                statsStr += key + ": " + stats[key] + "<br>";
-            }
-        }
-        mDrawString.innerHTML = statsStr;
     }
 
-    function LoadFrame()
-    {
-        var sequence = mSequence;
-        mSequence = mSequence + 1;
-
-        var request = new OvtRequest();
-        request.Start(mSessionId, sequence, THIS.DrawOptions);
-        request.OnDone = function ()
-        {
-            if (!mRunning)
-                return;
-            if (request.Error != null)
-            {
-                console.log("Error loading frame " + request.Sequence + ": " + request.Error);
-                ShowError("Loading frame " + sequence + ", " + request.Error);
-                return;
-            }
-            DrawFrame(sequence, this.Image, JSON.parse(this.Draw));
-            LoadFrame();
-        };
-    }
-
-    function HttpRequestDone(request, errorMessage)
-    {
-        if (!mRunning)
-            return false;
-        if (request.readyState != 4)
-            return false;
-        if (request.status != 200)
-        {
-            ShowError(errorMessage);
-            return false;
-        }
-        return true;
-    }
-
-    function Login()
-    {
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=login&sid=" + mSessionId
-            + "&username=" + mUsername + "&password=" + mPassword, true);
-        xhttp.send();
-        xhttp.onreadystatechange = function ()
-        {
-            if (!HttpRequestDone(this, "Login request failed"))
-                return;
-            var loginInfo = JSON.parse(xhttp.responseText);
-            if (!loginInfo.pass)
-            {
-                ShowError("Invalid user name or password");
-                return;
-            }
-            LoadFrame();
-        };
-    }
-
-    function StartSession()
-    {
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=startsession&rid=" + (new Date()).getMilliseconds(), true);
-        xhttp.send();
-        xhttp.onreadystatechange = function ()
-        {
-            if (!HttpRequestDone(this, "Start session request failed"))
-                return;
-            var sessionInfo = JSON.parse(xhttp.responseText);
-            mSessionId = sessionInfo.sid;
-            mSessionChallenge = sessionInfo.challenge;
-            Login();
-        };
-    }
-
-    THIS.Start = function (username, password)
-    {
-        mUsername = username;
-        mPassword = password;
-        mRunning = true;
-        InitializeCanvas();
-        StartSession(username, password);
-    }
-
-    THIS.Stop = function()
-    {
-        mRunning = false;
-    }
-
-    THIS.ErrorCallback = function(errorMessage)
-    {
-
-    }
 }
 
