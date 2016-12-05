@@ -4,8 +4,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
-using System.Threading;
-
+using System.Runtime.InteropServices;
 namespace Gosub.Viewtop
 {
     class FrameCollector
@@ -38,6 +37,16 @@ namespace Gosub.Viewtop
                                 Screen.PrimaryScreen.Bounds.Y,
                                 0, 0, mScreen.Size,
                                 CopyPixelOperation.SourceCopy);
+
+                // Draw the mouse cursor
+                bool cursorNeedsDisposing;
+                var cursor = CursorInfo.GetCursor(out cursorNeedsDisposing);
+                var position = Cursor.Position;
+                cursor.Draw(grScreen, new Rectangle(position.X-cursor.HotSpot.X, 
+                                                    position.Y-cursor.HotSpot.Y, 
+                                                    cursor.Size.Width, cursor.Size.Height));
+                if (cursorNeedsDisposing)
+                    cursor.Dispose();
             }
             var postCopyTime = DateTime.Now;
             CopyTime = postCopyTime - copyStartTime;
@@ -68,5 +77,60 @@ namespace Gosub.Viewtop
             ShrinkTime = DateTime.Now - postCopyTime;
             return scaledBm;
         }
+    }
+
+    class CursorInfo
+    {
+        // Get the cursor shown on the screen
+        // NOTE: Cursor.Current does not work, which is why this class is necessary
+        public static Cursor GetCursor(out bool cursorNeedsDisposing)
+        {
+            try
+            {
+                CURSORINFO cursorInfo;
+                cursorInfo.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
+                GetCursorInfo(out cursorInfo);
+                if (cursorInfo.hCursor != IntPtr.Zero)
+                {
+                    var cursor = new Cursor(cursorInfo.hCursor);
+
+                    // NOTE: Since the IBeam uses XOR, it is invisible when drawn by C#
+                    //       We should either create our own IBeam icon, or else use GDI
+                    //       to draw it
+                    if (cursor == Cursors.IBeam)
+                    {
+                        cursor.Dispose();
+                        cursorNeedsDisposing = false;
+                        return Cursors.Default;
+                    }
+                    cursorNeedsDisposing = true;
+                    return cursor;
+                }
+            }
+            catch
+            {
+            }
+            cursorNeedsDisposing = false;
+            return Cursors.Default;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct POINT
+        {
+            public int x;
+            public int y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct CURSORINFO
+        {
+            public int cbSize;
+            public int flags;
+            public IntPtr hCursor;
+            public POINT ptScreenPos;
+        }
+
+        [DllImport("user32.dll")]
+        static extern bool GetCursorInfo(out CURSORINFO pci);
     }
 }
