@@ -7,6 +7,9 @@ using Newtonsoft.Json;
 using System.Threading;
 using System.Diagnostics;
 using System.Collections.Specialized;
+using System.Windows.Forms;
+using System.Drawing;
+using System.Text;
 
 namespace Gosub.Viewtop
 {
@@ -25,6 +28,23 @@ namespace Gosub.Viewtop
         Dictionary<long, FrameInfo> mHistory = new Dictionary<long, FrameInfo>();
         FrameCollector mCollector;
         FrameCompressor mAnalyzer;
+        Events mEvents = new Events();
+
+        class RemoteEvent
+        {
+            public string Event { get; set; } = "";
+
+            // Mouse
+            public int Which { get; set; }
+            public int Delta;
+
+            // Keyboard
+            public int KeyCode;
+            public int KeyChar;
+            public bool KeyShift;
+            public bool KeyCtrl;
+            public bool KeyAlt;
+        }
 
         class FrameInfo
         {
@@ -73,7 +93,7 @@ namespace Gosub.Viewtop
             // --- Everything below this requires authentication ---
             if (!mAuthenticated)
             {
-                FileServer.SendError(response, "Query 'seq' must be numeric", 401);
+                FileServer.SendError(response, "User must log in", 401);
                 return;
             }
 
@@ -85,6 +105,8 @@ namespace Gosub.Viewtop
                 return;
             }
 
+            long time = UpdateMousePosition(request);
+
             if (query == "draw")
             {
                 FrameInfo frame;
@@ -94,9 +116,48 @@ namespace Gosub.Viewtop
                     FileServer.SendError(response, "Error retrieving draw frame " + sequence, 400);
                 return;
             }
+
+            if (query == "events")
+            {
+                int maxLength = 64000;
+                byte[] buffer = FileServer.GetRequest(request, maxLength);
+                string json = UTF8Encoding.UTF8.GetString(buffer);
+                var e = JsonConvert.DeserializeObject<RemoteEvent>(json);
+
+                if (e.Event == "mousedown" || e.Event == "mouseup")
+                    mEvents.MouseButton(time, e.Event == "mousedown" ? Events.Action.Down : Events.Action.Up, e.Which);
+                else if (e.Event == "mousewheel")
+                    mEvents.MouseWheel(time, e.Delta);
+                else if (e.Event == "keypress")
+                    mEvents.KeyPress(time, e.KeyCode, e.KeyChar, e.KeyShift, e.KeyCtrl, e.KeyAlt);
+                else if (e.Event != "") // "" Is legal
+                {
+                    FileServer.SendError(response, "ERROR: Invalid event name", 400);
+                    return;
+                }
+                FileServer.SendResponse(response, "", 200);
+                return;
+
+            }
             FileServer.SendError(response, "ERROR: Invalid query type", 400);
         }
 
+        long UpdateMousePosition(HttpListenerRequest request)
+        {
+            long time;
+            int x;
+            int y;
+            string ts = request.QueryString["t"];
+            string xs = request.QueryString["x"];
+            string ys = request.QueryString["y"];
+            if (ts == null || !long.TryParse(ts, out time)
+                || xs == null || !int.TryParse(xs, out x)
+                || ys == null || !int.TryParse(ys, out y)
+                || mCollector == null || mCollector.Scale == 0)
+                return 0;
+            mEvents.SetMousePosition(time, 1/mCollector.Scale, x, y);
+            return time;
+        }
 
         /// <summary>
         /// Retrieve the requested frame

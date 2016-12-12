@@ -5,14 +5,17 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
+
 namespace Gosub.Viewtop
 {
     class FrameCollector
     {
         Bitmap mScreen;
+        double mScale = 1;
 
         public TimeSpan CopyTime { get; set; }
         public TimeSpan ShrinkTime { get; set; }
+        public double Scale { get { return mScale; }  }
 
         /// <summary>
         /// Create a copy of the screen with a maximum width and height.
@@ -59,15 +62,16 @@ namespace Gosub.Viewtop
             if (maxWidth == mScreen.Width && maxHeight == mScreen.Height)
             {
                 // Screen size matches, return the screen as requested
+                mScale = 1;
                 ShrinkTime = new TimeSpan();
                 var screen = mScreen;
                 mScreen = null;
                 return screen;
             }
             // Scale the screen down to size
-            double scale = Math.Min(maxWidth/(double)mScreen.Width, maxHeight/(double)mScreen.Height);
-            int width = (int)(scale*mScreen.Width);
-            int height = (int)(scale*mScreen.Height);
+            mScale = Math.Min(maxWidth/(double)mScreen.Width, maxHeight/(double)mScreen.Height);
+            int width = (int)(mScale * mScreen.Width);
+            int height = (int)(mScale * mScreen.Height);
             var scaledBm = new Bitmap(width, height, PixelFormat.Format32bppRgb);
             using (Graphics grScaled = Graphics.FromImage(scaledBm))
             {

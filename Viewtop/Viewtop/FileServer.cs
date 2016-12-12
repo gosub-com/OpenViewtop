@@ -108,10 +108,6 @@ namespace Gosub.Viewtop
         {
             var request = context.Request;
 
-            // Deal with PUT requests later
-            if (request.HttpMethod != "GET")
-                throw new RequestException("Invalid HTTP request: " + request.HttpMethod);
-
             // Convert path to Windows, strip leading "\", and choose "index" if no name is given
             string path = request.Url.LocalPath.Replace('/', Path.DirectorySeparatorChar);
             while (path.Length != 0 && path[0] == Path.DirectorySeparatorChar)
@@ -137,6 +133,10 @@ namespace Gosub.Viewtop
                 handler(context);
                 return;
             }
+
+            // Static files can only be a GET request
+            if (request.HttpMethod != "GET")
+                throw new RequestException("Invalid HTTP request: " + request.HttpMethod);
 
             // If this is a file in our local subdirectory, send it to the client
             if (File.Exists(path))
@@ -168,6 +168,19 @@ namespace Gosub.Viewtop
             response.StatusCode = statusCode;
             response.ContentLength64 = message.Length;
             response.OutputStream.Write(message, 0, message.Length);
+        }
+
+        public static byte[] GetRequest(HttpListenerRequest request, int maxLength)
+        {
+            if (request.ContentLength64 > maxLength)
+                throw new Exception("Error: Content length is too large");
+
+            // NOTE: This needs to be fixed
+            var buffer = new byte[(int)request.ContentLength64];
+            if (request.InputStream.Read(buffer, 0, buffer.Length) != buffer.Length)
+                throw new Exception("Error: Chunks not allowed yet");
+
+            return buffer;
         }
 
     }

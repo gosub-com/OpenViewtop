@@ -15,39 +15,149 @@ function Viewtop(drawString, canvas)
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
     var mSessionChallenge = "";
-    var mSequence = 1;
+    var mGetSequence = 1;
+    var mPutSequence = 1;
     var mRunning = false;
     var mUsername = "";
     var mPassword = "";
 
+    var mSendTime = 0;
+    var mMouseMoveTime = 0;
+    var mMouseX = 0;
+    var mMouseY = 0;
+
     // Set draw options (each separated by '&')
-    THIS.DrawOptions = "";
+    this.DrawOptions = "";
 
     // Start the session
-    THIS.Start = function (username, password)
+    this.Start = function (username, password)
     {
         mUsername = username;
         mPassword = password;
         mRunning = true;
         InitializeCanvas();
         StartSession(username, password);
+
+        canvas.onmousemove = OnMouseMove;
+        canvas.onmousedown = OnMouseDown;
+        canvas.onmouseup = OnMouseUp;
+        canvas.onmousewheel = OnMouseWheel;
+        canvas.onkeypress = OnKeyPress;
+        canvas.oncontextmenu = function () { return false; }
     }
 
     // Stop the session
-    THIS.Stop = function()
+    this.Stop = function()
     {
-        mRunning = false;
+        StopInternal();
     }
 
     // Called when the session ends because of an error
-    THIS.ErrorCallback = function(errorMessage)
+    this.ErrorCallback = function(errorMessage)
     {
     }
+
+    function StopInternal()
+    {
+        mRunning = false;
+        canvas.onmousemove = function () { };
+        canvas.onmousedown = function () { };
+        canvas.onmouseup = function () { };
+        canvas.onmousewheel = function () { };
+        canvas.onkeydown = function () { };
+        canvas.oncontextmenu = function () { return true; }
+    }
+
+    // TBD: Events should be queued so they can be ordered properly.
+    function SendEvent(json)
+    {
+        var sequence = mPutSequence;
+        mPutSequence = mPutSequence + 1;
+
+        mSendTime = Date.now();
+        var xhttp = new XMLHttpRequest();
+        xhttp.open("PUT", "index.ovt?query=events&sid=" + mSessionId
+            + "&seq=" + sequence
+            + "&t=" + mSendTime
+            + "&x=" + mMouseX
+            + "&y=" + mMouseY
+            + "&" + THIS.DrawOptions, true);
+        xhttp.send(json);
+    }
+   
+
+    // Called when the user clicks the canvas
+    function OnMouseDown(e)
+    {
+        OnMouseMove(e);
+        var map = {};
+        map.Event = "mousedown";
+        map.Which = e.which;
+        SendEvent(JSON.stringify(map));
+    }
+
+    // Called when the user releases the mouse button
+    function OnMouseUp(e)
+    {
+        OnMouseMove(e);
+        var map = {};
+        map.Event = "mouseup";
+        map.Which = e.which;
+        SendEvent(JSON.stringify(map));
+    }
+
+    // Called when the user scrolls the mouse wheel
+    function OnMouseWheel(e)
+    {
+        OnMouseMove(e);
+        var map = {};
+        map.Event = "mousewheel";
+        var delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
+        map.Delta = delta;
+        SendEvent(JSON.stringify(map));
+        preventDefault(e);
+    }
+
+    // Called when the user presses a key
+    function OnKeyPress(e)
+    {
+        var map = {};
+        map.Event = "keypress";
+        map.KeyCode = e.keyCode;
+        map.KeyChar = e.charCode;
+        map.KeyShift = e.shiftKey;
+        map.KeyCtrl = e.ctrlKey;
+        map.KeyAlt = e.altKey;
+        SendEvent(JSON.stringify(map));
+        preventDefault(e);
+    }
+
+    // Prevent the canvas default action (e.g. no mouse wheel, etc.)
+    function preventDefault(e)
+    {
+        if (e.preventDefault)
+        {
+            e.preventDefault();
+            return;
+        }
+        e.returnValue = false;
+    }
+
+    // Called when user moves the mouse on the canvas
+    function OnMouseMove(e)
+    {
+        // The mouse event will be sent with the next frame of after some
+        // time if the frame is delayed
+        var r = canvas.getBoundingClientRect();
+        mMouseX = Math.round(e.clientX - r.left);
+        mMouseY = Math.round(e.clientY - r.top);
+        mMouseMoveTime = Date.now();
+    }    
 
     function StartSession()
     {
         var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=startsession&rid=" + (new Date()).getMilliseconds(), true);
+        xhttp.open("GET", "index.ovt?query=startsession&rid=" + Date.now(), true);
         xhttp.send();
         xhttp.onreadystatechange = function ()
         {
@@ -82,20 +192,25 @@ function Viewtop(drawString, canvas)
 
     function LoadFrame()
     {
-        var sequence = mSequence;
-        mSequence = mSequence + 1;
+        var sequence = mGetSequence;
+        mGetSequence = mGetSequence + 1;
 
         // Start downloading the draw buffer
-
+        mSendTime = Date.now();
         var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=draw&sid=" + mSessionId + "&seq=" + sequence + "&" + THIS.DrawOptions, true);
+        xhttp.open("GET", "index.ovt?query=draw&sid=" + mSessionId
+            + "&seq=" + sequence
+            + "&t=" + mSendTime
+            + "&x=" + mMouseX
+            + "&y=" + mMouseY
+            + "&" + THIS.DrawOptions, true);
         xhttp.send();
         xhttp.onreadystatechange = function ()
         {
             if (!HttpRequestDone(this, "Frame request failed"))
                 return;
 
-            var startTime = new Date().getMilliseconds();
+            var startTime = Date.now();
             var drawBuffer = JSON.parse(xhttp.responseText);
             drawBuffer.DrawStartTime = startTime;
 
@@ -155,7 +270,7 @@ function Viewtop(drawString, canvas)
 
         // Show stats
         var stats = drawBuffer.Stats;
-        stats.DrawTime = new Date().getMilliseconds() - drawBuffer.DrawStartTime;
+        stats.DrawTime = Date.now() - drawBuffer.DrawStartTime;
         var statsStr = "";
         for (var key in stats)
             if (stats.hasOwnProperty(key))
@@ -196,12 +311,12 @@ function Viewtop(drawString, canvas)
         mContext.fillStyle = '#88F';
         mContext.fillText('ERROR: ' + errorMessage, 15, 25);
         THIS.ErrorCallback(errorMessage);
-        mRunning = false;
+        StopInternal();
     }
     function ShowMessage(errorMessage)
     {
         mContext.fillStyle = '#000';
-        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
+        mContext.fillRect(0, 0, mCanvas.width,25);
         mContext.font = '26px sans-serif';
         mContext.fillStyle = '#88F';
         mContext.fillText('MSG: ' + errorMessage, 15, 25);
