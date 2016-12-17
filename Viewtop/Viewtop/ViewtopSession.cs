@@ -15,6 +15,11 @@ namespace Gosub.Viewtop
 {
     class ViewtopSession
     {
+        // Debug - Add latency to test link
+        public static int sSimulatedLatencyMs = 0;
+        public static int sSimulatedJitterMs = 0;
+        static Random sRandom = new Random();
+
         const int FUTURE_FRAME_TIMEOUT_SEC = 5; // Allow up to 5 seconds before cancelling a request
         const int HISTORY_FRAMES = 2; // Save old frames for repeated requests
 
@@ -30,13 +35,16 @@ namespace Gosub.Viewtop
         FrameCompressor mAnalyzer;
         Events mEvents = new Events();
 
-        class RemoteEvent
+        class MouseOrKeyEvent
         {
             public string Event { get; set; } = "";
+            public long Time { get; set; }
 
             // Mouse
             public int Which { get; set; }
             public int Delta;
+            public int X;
+            public int Y;
 
             // Keyboard
             public int KeyCode;
@@ -44,6 +52,11 @@ namespace Gosub.Viewtop
             public bool KeyShift;
             public bool KeyCtrl;
             public bool KeyAlt;
+        }
+
+        class RemoteEvents
+        {
+            public List<MouseOrKeyEvent> Events { get; set; } = new List<MouseOrKeyEvent>();
         }
 
         class FrameInfo
@@ -85,7 +98,7 @@ namespace Gosub.Viewtop
                 string username = request.QueryString["username"];
                 string password = request.QueryString["password"];
                 if (username != null && password != null)
-                    mAuthenticated = username.ToLower() == "jms" && password == "12345";
+                    mAuthenticated = username.ToLower() == "" && password == "";
                 FileServer.SendResponse(response, @"{""pass"": " + mAuthenticated.ToString().ToLower() + "}", 200);
                 return;
             }
@@ -105,10 +118,17 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            long time = UpdateMousePosition(request);
+            // Simulate latency and jitter
+            if (sSimulatedLatencyMs != 0 || sSimulatedJitterMs != 0)
+            {
+                int latencyMs = sRandom.Next(sSimulatedJitterMs) + sSimulatedLatencyMs;
+                if (latencyMs != 0)
+                    Thread.Sleep(latencyMs);
+            }
 
             if (query == "draw")
             {
+                UpdateMousePositionFromDrawQuery(request);
                 FrameInfo frame;
                 if (WaitForImageOrTimeout(sequence, out frame, request.QueryString))
                     FileServer.SendResponse(response, JsonConvert.SerializeObject(frame), 200);
@@ -122,27 +142,40 @@ namespace Gosub.Viewtop
                 int maxLength = 64000;
                 byte[] buffer = FileServer.GetRequest(request, maxLength);
                 string json = UTF8Encoding.UTF8.GetString(buffer);
-                var e = JsonConvert.DeserializeObject<RemoteEvent>(json);
+                var events = JsonConvert.DeserializeObject<RemoteEvents>(json);
 
-                if (e.Event == "mousedown" || e.Event == "mouseup")
-                    mEvents.MouseButton(time, e.Event == "mousedown" ? Events.Action.Down : Events.Action.Up, e.Which);
-                else if (e.Event == "mousewheel")
-                    mEvents.MouseWheel(time, e.Delta);
-                else if (e.Event == "keypress")
-                    mEvents.KeyPress(time, e.KeyCode, e.KeyChar, e.KeyShift, e.KeyCtrl, e.KeyAlt);
-                else if (e.Event != "") // "" Is legal
+                foreach (var e in events.Events)
                 {
-                    FileServer.SendError(response, "ERROR: Invalid event name", 400);
-                    return;
+                    switch (e.Event)
+                    {
+                        case "mousemove":
+                            if (mCollector != null && mCollector.Scale != 0)
+                                mEvents.SetMousePosition(e.Time, 1/mCollector.Scale, e.X, e.Y, true);
+                            break;
+                        case "mousedown":
+                        case "mouseup":
+                            if (mCollector != null && mCollector.Scale != 0)
+                                mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, true);
+                            mEvents.MouseButton(e.Event == "mousedown" ? Events.Action.Down : Events.Action.Up, e.Which);
+                            break;
+                        case "mousewheel":
+                            if (mCollector != null && mCollector.Scale != 0)
+                                mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, true);
+                            mEvents.MouseWheel(e.Delta);
+                            break;
+                        case "keypress":
+                            mEvents.KeyPress(e.KeyCode, e.KeyChar, e.KeyShift, e.KeyCtrl, e.KeyAlt);
+                            break;
+
+                    }
                 }
                 FileServer.SendResponse(response, "", 200);
                 return;
-
             }
             FileServer.SendError(response, "ERROR: Invalid query type", 400);
         }
 
-        long UpdateMousePosition(HttpListenerRequest request)
+        void UpdateMousePositionFromDrawQuery(HttpListenerRequest request)
         {
             long time;
             int x;
@@ -154,9 +187,8 @@ namespace Gosub.Viewtop
                 || xs == null || !int.TryParse(xs, out x)
                 || ys == null || !int.TryParse(ys, out y)
                 || mCollector == null || mCollector.Scale == 0)
-                return 0;
-            mEvents.SetMousePosition(time, 1/mCollector.Scale, x, y);
-            return time;
+                return;
+            mEvents.SetMousePosition(time, 1/mCollector.Scale, x, y, false);
         }
 
         /// <summary>

@@ -33,6 +33,10 @@ namespace Gosub.Viewtop
         private void FormMain_Load(object sender, EventArgs e)
         {
             StopWebServer();
+            comboLatency.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
+            comboLatency.SelectedIndex = 0;
+            comboJitter.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
+            comboJitter.SelectedIndex = 0;
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
@@ -219,5 +223,16 @@ namespace Gosub.Viewtop
             }
         }
 
+        private void comboLatency_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (comboLatency.SelectedIndex >= 0)
+                ViewtopSession.sSimulatedLatencyMs = (int)comboLatency.Items[comboLatency.SelectedIndex];
+        }
+
+        private void comboJitter_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (comboJitter.SelectedIndex >= 0)
+                ViewtopSession.sSimulatedJitterMs = (int)comboJitter.Items[comboJitter.SelectedIndex];
+        }
     }
 }

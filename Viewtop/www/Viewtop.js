@@ -21,10 +21,20 @@ function Viewtop(drawString, canvas)
     var mUsername = "";
     var mPassword = "";
 
-    var mSendTime = 0;
     var mMouseMoveTime = 0;
     var mMouseX = 0;
     var mMouseY = 0;
+    var mKeyAndMouseEvents = [];
+
+    var mFps = 0;
+    var mFpsCounter = 0;
+    var mFpsTime = Date.now();
+
+    var mGetsOutstanding = 0;
+    var mGetSendTime = 0;
+
+    var mPutsOutstanding = 0;
+    var mPutSendTime = 0;
 
     // Set draw options (each separated by '&')
     this.DrawOptions = "";
@@ -66,69 +76,64 @@ function Viewtop(drawString, canvas)
         canvas.onmousewheel = function () { };
         canvas.onkeydown = function () { };
         canvas.oncontextmenu = function () { return true; }
-    }
-
-    // TBD: Events should be queued so they can be ordered properly.
-    function SendEvent(json)
-    {
-        var sequence = mPutSequence;
-        mPutSequence = mPutSequence + 1;
-
-        mSendTime = Date.now();
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("PUT", "index.ovt?query=events&sid=" + mSessionId
-            + "&seq=" + sequence
-            + "&t=" + mSendTime
-            + "&x=" + mMouseX
-            + "&y=" + mMouseY
-            + "&" + THIS.DrawOptions, true);
-        xhttp.send(json);
-    }
-   
+    }   
 
     // Called when the user clicks the canvas
     function OnMouseDown(e)
     {
-        OnMouseMove(e);
-        var map = {};
-        map.Event = "mousedown";
-        map.Which = e.which;
-        SendEvent(JSON.stringify(map));
+        mKeyAndMouseEvents.push(GetMouseEvent("mousedown", e));
     }
 
     // Called when the user releases the mouse button
     function OnMouseUp(e)
     {
-        OnMouseMove(e);
-        var map = {};
-        map.Event = "mouseup";
-        map.Which = e.which;
-        SendEvent(JSON.stringify(map));
+        mKeyAndMouseEvents.push(GetMouseEvent("mouseup", e));
     }
 
     // Called when the user scrolls the mouse wheel
     function OnMouseWheel(e)
     {
-        OnMouseMove(e);
-        var map = {};
-        map.Event = "mousewheel";
-        var delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
-        map.Delta = delta;
-        SendEvent(JSON.stringify(map));
+        var mouseEvent = GetMouseEvent("mousewheel", e);
+        mouseEvent.Delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
+        mKeyAndMouseEvents.push(mouseEvent);
         preventDefault(e);
     }
+
+    function GetMouseEvent(eventName, e)
+    {
+        OnMouseMove(e);
+        var mouseEvent = {};
+        mouseEvent.Event = eventName;
+        mouseEvent.Which = e.which;
+        mouseEvent.Time = mMouseMoveTime;
+        mouseEvent.X = mMouseX;
+        mouseEvent.Y = mMouseY;
+        return mouseEvent;
+    }
+
+    // Called when user moves the mouse over the canvas
+    function OnMouseMove(e)
+    {
+        // The mouse event will be sent with the next frame of after some
+        // time if the frame is delayed
+        var r = canvas.getBoundingClientRect();
+        mMouseX = Math.round(e.clientX - r.left);
+        mMouseY = Math.round(e.clientY - r.top);
+        mMouseMoveTime = Date.now();
+    }    
 
     // Called when the user presses a key
     function OnKeyPress(e)
     {
-        var map = {};
-        map.Event = "keypress";
-        map.KeyCode = e.keyCode;
-        map.KeyChar = e.charCode;
-        map.KeyShift = e.shiftKey;
-        map.KeyCtrl = e.ctrlKey;
-        map.KeyAlt = e.altKey;
-        SendEvent(JSON.stringify(map));
+        var keyEvent = {};
+        keyEvent.Time = Date.now();
+        keyEvent.Event = "keypress";
+        keyEvent.KeyCode = e.keyCode;
+        keyEvent.KeyChar = e.charCode;
+        keyEvent.KeyShift = e.shiftKey;
+        keyEvent.KeyCtrl = e.ctrlKey;
+        keyEvent.KeyAlt = e.altKey;
+        mKeyAndMouseEvents.push(keyEvent);
         preventDefault(e);
     }
 
@@ -142,17 +147,6 @@ function Viewtop(drawString, canvas)
         }
         e.returnValue = false;
     }
-
-    // Called when user moves the mouse on the canvas
-    function OnMouseMove(e)
-    {
-        // The mouse event will be sent with the next frame of after some
-        // time if the frame is delayed
-        var r = canvas.getBoundingClientRect();
-        mMouseX = Math.round(e.clientX - r.left);
-        mMouseY = Math.round(e.clientY - r.top);
-        mMouseMoveTime = Date.now();
-    }    
 
     function StartSession()
     {
@@ -186,9 +180,70 @@ function Viewtop(drawString, canvas)
                 ShowError("Invalid user name or password");
                 return;
             }
-            LoadFrame();
+            EventsLoop();
         };
     }
+
+    // Main event processing loop, call ProcessEvents every 33 milliseconds
+    function EventsLoop()
+    {
+        if (!mRunning)
+            return;
+        setTimeout(function () { EventsLoop(); }, 33);
+        ProcessEvents();
+    }
+
+    // Process all events.  Called every 33 milliseconds or whenever
+    // something is done processing (draw frame, keyboard, etc.)
+    function ProcessEvents()
+    {
+        if (!mRunning)
+            return;
+
+        // Request frame
+        if (mGetsOutstanding == 0)
+            LoadFrame();
+
+        // Request next frame before receiving previous frame 
+        // (i.e. double buffer) to reduce the round trip time latency.  
+        // TBD: Use round trip timer instead of hardcoded value
+        var ROUND_TRIP_TIME = 80;
+        if (mGetsOutstanding == 1 && Date.now() - mGetSendTime > ROUND_TRIP_TIME / 2)
+            LoadFrame();
+
+        // Send mouse and keyboard events
+        if (mPutsOutstanding == 0 && mKeyAndMouseEvents.length != 0)
+            SendEvents();
+    }
+
+    function SendEvents()
+    {
+        console.log(mKeyAndMouseEvents);
+
+        var jsonObject = { Events: mKeyAndMouseEvents};
+        mKeyAndMouseEvents = [];
+
+        console.log(jsonObject);
+
+
+        var sequence = mPutSequence;
+        mPutSequence = mPutSequence + 1;
+
+        mPutSendTime = Date.now();
+        mPutsOutstanding++;
+        var xhttp = new XMLHttpRequest();
+        xhttp.open("PUT", "index.ovt?query=events&sid=" + mSessionId
+            + "&seq=" + sequence, true);
+        xhttp.send(JSON.stringify(jsonObject));
+        xhttp.onreadystatechange = function()
+        {
+            if (!HttpRequestDone(this, "Send events failed"))
+                return;
+            mPutsOutstanding--;
+            ProcessEvents();
+        }
+    }
+
 
     function LoadFrame()
     {
@@ -196,11 +251,12 @@ function Viewtop(drawString, canvas)
         mGetSequence = mGetSequence + 1;
 
         // Start downloading the draw buffer
-        mSendTime = Date.now();
+        mGetSendTime = Date.now();
+        mGetsOutstanding++;
         var xhttp = new XMLHttpRequest();
         xhttp.open("GET", "index.ovt?query=draw&sid=" + mSessionId
             + "&seq=" + sequence
-            + "&t=" + mSendTime
+            + "&t=" + mGetSendTime
             + "&x=" + mMouseX
             + "&y=" + mMouseY
             + "&" + THIS.DrawOptions, true);
@@ -209,6 +265,13 @@ function Viewtop(drawString, canvas)
         {
             if (!HttpRequestDone(this, "Frame request failed"))
                 return;
+            mGetsOutstanding--;
+
+            // NOTE: This might be early since the images have to be loaded
+            //       by the browser before drawing.  But since that's all
+            //       done locally, it seems unlikely that a new frame could 
+            //       arrive remotely and be drawn out of sequence
+            ProcessEvents();
 
             var startTime = Date.now();
             var drawBuffer = JSON.parse(xhttp.responseText);
@@ -220,16 +283,9 @@ function Viewtop(drawString, canvas)
 
     // Load all the images in parallel, then draw them
     function LoadImagesThenDraw(drawBuffer)
-    {
+    {        
+        // Load all images, then issue draw after all of them have loaded
         var frames = drawBuffer.Frames;
-        
-        if (frames.length == 0)
-        {
-            DrawImagesThenLoadNextFrame(drawBuffer);
-            return;
-        }
-
-        // Load images, issue draw after all of them have loaded
         var totalImagesLoaded = 0;
         for (var i = 0; i < frames.length; i++)
         {
@@ -240,7 +296,7 @@ function Viewtop(drawString, canvas)
 
                 // The the images after they are all loaded
                 if (++totalImagesLoaded == frames.length)
-                    DrawImagesThenLoadNextFrame(drawBuffer);
+                    DrawImages(drawBuffer);
             });
             image.onerror = function ()
             {
@@ -258,10 +314,15 @@ function Viewtop(drawString, canvas)
         return function () { return f(param1, param2); }
     }
 
-    function DrawImagesThenLoadNextFrame(drawBuffer)
+    function DrawImages(drawBuffer)
     {
-        // We can issue the load before drawing since it won't run until this exits
-        LoadFrame();
+        mFpsCounter++;
+        if (mFpsTime != Math.round(Date.now()/1000))
+        {
+            mFpsTime = Math.round(Date.now()/1000);
+            mFps = mFpsCounter;
+            mFpsCounter = 0;
+        }
 
         // Draw frames
         var frames = drawBuffer.Frames;
@@ -271,6 +332,7 @@ function Viewtop(drawString, canvas)
         // Show stats
         var stats = drawBuffer.Stats;
         stats.DrawTime = Date.now() - drawBuffer.DrawStartTime;
+        stats.FPS = mFps;
         var statsStr = "";
         for (var key in stats)
             if (stats.hasOwnProperty(key))

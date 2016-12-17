@@ -9,11 +9,11 @@ using System.Drawing;
 namespace Gosub.Viewtop
 {
     /// <summary>
-    /// NOTE: Need to implement a queue to order events properly.
-    ///       The client marks all events with a time, but currently we lose
-    ///       events when they come out of order.  
+    /// NOTE: We should delay mouse events and play them back a little delayed,
+    ///       but with relative timing preserved.  This would improve the chance
+    ///       that multiple clicks are grouped properly to a double click event.
     ///       
-    /// Also need to ignore mouse events when the local user is dragging the mouse.
+    /// Need to ignore remote mouse events when the local user is dragging the mouse.
     /// </summary>
     class Events
     {
@@ -25,11 +25,6 @@ namespace Gosub.Viewtop
         long mMouseMoveTime;
         int mMouseX;
         int mMouseY;
-
-        // NOTE: This works to prevent old clicks from being generated
-        //       but we really should have a delayed queue instead
-        //       because right now double clicks are unreliable
-        long mMouseEventTime;
 
         public enum Button
         {
@@ -43,27 +38,23 @@ namespace Gosub.Viewtop
             Up = 2
         }
 
-        public void SetMousePosition(long remoteTime, double scale, int x, int y)
+        public void SetMousePosition(long remoteTime, double scale, int x, int y, bool force)
         {
-            if (remoteTime <= mMouseMoveTime)
-                return;
-            if (x == mMouseX && y == mMouseY)
-                return;
-
+            if (!force)
+            {
+                if (remoteTime <= mMouseMoveTime)
+                    return;
+                if (x == mMouseX && y == mMouseY)
+                    return;
+            }
             mMouseMoveTime = remoteTime;
             mMouseX = x;
             mMouseY = y;
-
-            var p = new Point((int)(scale * x), (int)(scale * y));
-            Cursor.Position = p;
+            Cursor.Position = new Point((int)(scale * x), (int)(scale * y));
         }
 
-        public void MouseButton(long remoteTime, Action action, Button button)
+        public void MouseButton(Action action, Button button)
         {
-            if (remoteTime <= mMouseEventTime)
-                return;
-            mMouseEventTime = remoteTime;
-
             try
             {
                 int flags = (int)button * (int)action;
@@ -79,7 +70,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Generate mouse event from standard browser event
         /// </summary>
-        public void MouseButton(long remoteTime, Action action, int which)
+        public void MouseButton(Action action, int which)
         {
             Button button;
             switch (which)
@@ -89,14 +80,11 @@ namespace Gosub.Viewtop
                 case 3: button = Events.Button.Right; break;
                 default: return;
             }
-            MouseButton(remoteTime, action, button);
+            MouseButton(action, button);
         }
 
-        public void MouseWheel(long remoteTime, int delta)
+        public void MouseWheel(int delta)
         {
-            if (remoteTime <= mMouseEventTime)
-                return;
-            mMouseEventTime = remoteTime;
             if (delta >= 0)
                 delta = 120;
             else
@@ -112,11 +100,9 @@ namespace Gosub.Viewtop
             }
         }
 
-        public void KeyPress(long remoteTime, int code, int ch, bool shift, bool ctrl, bool alt)
+        public void KeyPress(int code, int ch, bool shift, bool ctrl, bool alt)
         {
-            // TBD: Need to implement a queue to prevent keys from coming out of order.
-            //      Also need to implement all the special keys (up, down, backspace, etc.)
-
+            // TBD: Still need to implement all the special keys (up, down, backspace, etc.)
             StringBuilder sb = new StringBuilder();
             if (shift)
                 sb.Append('+');
