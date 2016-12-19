@@ -58,6 +58,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="App.cs" />
+    <Compile Include="FormPassword.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPassword.Designer.cs">
+      <DependentUpon>FormPassword.cs</DependentUpon>
+    </Compile>
     <Compile Include="Viewtop\BlockWriter.cs" />
     <Compile Include="Viewtop\FileServer.cs" />
     <Compile Include="FormMain.cs">
@@ -72,11 +79,16 @@
     <Compile Include="Viewtop\FrameCollector.cs" />
     <Compile Include="Viewtop\Bitmap32Bits.cs" />
     <Compile Include="Viewtop\Events.cs" />
+    <Compile Include="Viewtop\Users.cs" />
     <Compile Include="Viewtop\PFXGenerator.cs" />
+    <Compile Include="Viewtop\Util.cs" />
     <Compile Include="Viewtop\ViewtopServer.cs" />
     <Compile Include="Viewtop\ViewtopSession.cs" />
     <EmbeddedResource Include="FormMain.resx">
       <DependentUpon>FormMain.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="FormPassword.resx">
+      <DependentUpon>FormPassword.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
@@ -117,6 +129,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="www\Viewtop.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="www\Sha256.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="www\_template_without_bom.html">

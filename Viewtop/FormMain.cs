@@ -32,6 +32,7 @@ namespace Gosub.Viewtop
 
         private void FormMain_Load(object sender, EventArgs e)
         {
+            Text = App.Name + ", version " + App.Version;
             StopWebServer();
             comboLatency.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
             comboLatency.SelectedIndex = 0;
@@ -41,7 +42,59 @@ namespace Gosub.Viewtop
 
         private void FormMain_Shown(object sender, EventArgs e)
         {
+            Show();
+            Refresh();
+            var userFile = LoadUserNamesListBox();
+
+            // Ask to create a new user if there are none
+            if (userFile.Users.Count == 0)
+            {
+                CreateNewUser("You must create a user name and password:");
+                if (UserFile.Load().Users.Count == 0)
+                    MessageBox.Show(this, "No one will be able to log on to the server until you create a username and password!", App.Name);
+                LoadUserNamesListBox();
+            }
             StartWebServer();
+        }
+
+        UserFile LoadUserNamesListBox()
+        {
+            var userFile = UserFile.Load();
+            listUsers.Items.Clear();
+            foreach (var user in userFile.Users)
+                listUsers.Items.Add(user.UserName);
+            UpdateGui();
+            return userFile;
+        }
+
+        void UpdateGui()
+        {
+            buttonDeleteUser.Enabled = listUsers.SelectedIndex >= 0;
+            buttonChangePassword.Enabled = listUsers.SelectedIndex >= 0;
+        }
+
+        void CreateNewUser(string message)
+        {
+            var passwordForm = new FormPassword();
+            passwordForm.Message = message;
+            passwordForm.ShowDialog(this);
+            if (!passwordForm.Accepted)
+                return;
+
+            var userFile = UserFile.Load();
+            var user = userFile.Find(passwordForm.UserName);
+            if (user != null)
+            {
+                MessageBox.Show(this, "This user already exists", App.Name);
+                return;
+            }
+
+            // Create and save new user
+            user = new User();
+            user.UserName = passwordForm.UserName;
+            user.ResetPassword(passwordForm.Password);
+            userFile.Users.Add(user);
+            UserFile.Save(userFile);
         }
 
         private void buttonStart_Click(object sender, EventArgs e)
@@ -102,7 +155,7 @@ namespace Gosub.Viewtop
             catch (Exception ex)
             {
                 mFileServer = null;
-                MessageBox.Show(this, "Error starting web server: " + ex.Message);
+                MessageBox.Show(this, "Error starting web server: " + ex.Message, App.Name);
                 labelSecureLink.Text = "Error starting server";
                 return;
             }
@@ -200,13 +253,13 @@ namespace Gosub.Viewtop
 
                 if (!IsAdministrator())
                 {
-                    MessageBox.Show(this, "WARNING:  Secure communications (i.e. HTTPS) may not work because this application does not have administrator privileges.", "Viewtop");
+                    MessageBox.Show(this, "WARNING:  Secure communications (i.e. HTTPS) may not work because this application does not have administrator privileges.", App.Name);
                 }
 
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Error setting up secure link.  Your HTTPS connection may not work.  \r\n\r\n" + ex.Message, "Viewtop");
+                MessageBox.Show(this, "Error setting up secure link.  Your HTTPS connection may not work.  \r\n\r\n" + ex.Message, App.Name);
             }
         }
 
@@ -234,5 +287,49 @@ namespace Gosub.Viewtop
             if (comboJitter.SelectedIndex >= 0)
                 ViewtopSession.sSimulatedJitterMs = (int)comboJitter.Items[comboJitter.SelectedIndex];
         }
+
+        private void listUsers_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            UpdateGui();
+        }
+
+        private void buttonNewUser_Click(object sender, EventArgs e)
+        {
+            CreateNewUser("Create a new user:");
+            LoadUserNamesListBox();
+        }
+
+        private void buttonDeleteUser_Click(object sender, EventArgs e)
+        {
+            if (listUsers.SelectedIndex < 0)
+                return;
+            if (MessageBox.Show(this, "Are you sure you want to delte this user?", App.Name, MessageBoxButtons.YesNo) == DialogResult.No)
+                return;
+            var userFile = UserFile.Load();
+            userFile.Remove((string)listUsers.Items[listUsers.SelectedIndex]);
+            UserFile.Save(userFile);
+            LoadUserNamesListBox();
+        }
+
+        private void buttonChangePassword_Click(object sender, EventArgs e)
+        {
+            if (listUsers.SelectedIndex < 0)
+                return;
+            var userFile = UserFile.Load();
+            var user = userFile.Find((string)listUsers.Items[listUsers.SelectedIndex]);
+            if (user == null)
+                return;
+             
+            var passwordForm = new FormPassword();
+            passwordForm.Message = "Enter new password for " + user.UserName + ":";
+            passwordForm.UserName = user.UserName;
+            passwordForm.UserNameReadOnly = true;
+            passwordForm.ShowDialog(this);
+            if (!passwordForm.Accepted)
+                return;
+            user.ResetPassword(passwordForm.Password);
+            UserFile.Save(userFile);
+        }
+
     }
 }

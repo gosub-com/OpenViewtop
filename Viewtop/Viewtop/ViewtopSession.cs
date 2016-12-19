@@ -23,9 +23,9 @@ namespace Gosub.Viewtop
         const int FUTURE_FRAME_TIMEOUT_SEC = 5; // Allow up to 5 seconds before cancelling a request
         const int HISTORY_FRAMES = 2; // Save old frames for repeated requests
 
-        public int SessionId { get; }
+        public long SessionId { get; }
         public DateTime LastRequestTime { get; set; }
-        public string Challenge { get; } = DateTime.Now.Ticks.ToString();
+        string mChallenge { get; set; } = "";
 
         object mLock = new object();
         bool mAuthenticated;
@@ -76,7 +76,7 @@ namespace Gosub.Viewtop
             public int Collisions { get; set; }
         }
 
-        public ViewtopSession(int sessionId)
+        public ViewtopSession(long sessionId)
         {
             SessionId = sessionId;
         }
@@ -86,19 +86,35 @@ namespace Gosub.Viewtop
         /// </summary>
         public void ProcessWebRemoteViewerRequest(HttpListenerContext context)
         {
+            LastRequestTime = DateTime.Now;
             var request = context.Request;
             var response = context.Response;
-
-            string sequenceStr = request.QueryString["seq"];
             string query = request.QueryString["query"];
+
+            if (query == "startsession")
+            {
+                // Send session id, password salt, and challenge
+                mChallenge = Util.GenerateSalt();
+                var user = UserFile.Load().Find(request.QueryString["username"]);
+                string salt = user != null ? user.Salt : Util.GenerateSalt();
+                FileServer.SendResponse(response,
+                    @"{""sid"": " + SessionId
+                    + @",""challenge"":""" + mChallenge
+                    + @""",""salt"":""" + salt + @"""}", 200);
+                return;
+            }
 
             if (query == "login")
             {
-                // TBD: Authenticate by reading password file
+                // Authenticate user
                 string username = request.QueryString["username"];
-                string password = request.QueryString["password"];
-                if (username != null && password != null)
-                    mAuthenticated = username.ToLower() == "" && password == "";
+                var passwordHash = request.QueryString["hash"];
+                if (username != null && passwordHash != null)
+                {
+                    var user = UserFile.Load().Find(username);
+                    if (user != null)
+                        mAuthenticated = user.VerifyPassword(mChallenge, passwordHash);
+                }
                 FileServer.SendResponse(response, @"{""pass"": " + mAuthenticated.ToString().ToLower() + "}", 200);
                 return;
             }
@@ -111,6 +127,7 @@ namespace Gosub.Viewtop
             }
 
             // --- Everything below this requires a sequence number
+            string sequenceStr = request.QueryString["seq"];
             long sequence;
             if (sequenceStr == null || !long.TryParse(sequenceStr, out sequence))
             {

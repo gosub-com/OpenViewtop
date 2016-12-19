@@ -1,8 +1,10 @@
-//
+﻿//
 // Copyright (C) 2016 by Jeremy Spiller, all rights reserved
 //
 
 "use strict"
+
+// NOTE: Include "Sha256.js"
 
 //
 // Main remote viewer class, used to continuosly update the canvas.
@@ -14,7 +16,6 @@ function Viewtop(drawString, canvas)
     var mCanvas = canvas;
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
-    var mSessionChallenge = "";
     var mGetSequence = 1;
     var mPutSequence = 1;
     var mRunning = false;
@@ -151,7 +152,7 @@ function Viewtop(drawString, canvas)
     function StartSession()
     {
         var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=startsession&rid=" + Date.now(), true);
+        xhttp.open("GET", "index.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername, true);
         xhttp.send();
         xhttp.onreadystatechange = function ()
         {
@@ -159,16 +160,16 @@ function Viewtop(drawString, canvas)
                 return;
             var sessionInfo = JSON.parse(xhttp.responseText);
             mSessionId = sessionInfo.sid;
-            mSessionChallenge = sessionInfo.challenge;
-            Login();
+            Login(sessionInfo.salt, sessionInfo.challenge);
         };
     }
 
-    function Login()
+    function Login(salt, challenge)
     {
         var xhttp = new XMLHttpRequest();
         xhttp.open("GET", "index.ovt?query=login&sid=" + mSessionId
-            + "&username=" + mUsername + "&password=" + mPassword, true);
+            + "&username=" + mUsername
+            + "&hash=" + Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase());
         xhttp.send();
         xhttp.onreadystatechange = function ()
         {
@@ -514,4 +515,3 @@ function Viewtop(drawString, canvas)
     }
 
 }
-

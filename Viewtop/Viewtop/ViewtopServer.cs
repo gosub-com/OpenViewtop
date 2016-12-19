@@ -16,8 +16,7 @@ namespace Gosub.Viewtop
         const int CONNECTION_TIMEOUT_SEC = 30;
         object mLock = new object();
 
-        int mSessionId = 1;
-        Dictionary<int, ViewtopSession> mSessions = new Dictionary<int, ViewtopSession>();
+        Dictionary<long, ViewtopSession> mSessions = new Dictionary<long, ViewtopSession>();
 
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
@@ -38,24 +37,27 @@ namespace Gosub.Viewtop
                 FileServer.SendResponse(response, "{JSON GOES HERE - Describe screens}", 200);
                 return;
             }
+
             if (query == "startsession")
             {
                 PurgeInactiveSessions();
+
+                // Create a new session with a random session ID
                 ViewtopSession newSession;
                 lock (mLock)
                 {
-                    newSession = new ViewtopSession(mSessionId);
-                    newSession.LastRequestTime = DateTime.Now;
-                    mSessions[mSessionId++] = newSession;
+                    long sessionId;
+                    do { sessionId = Util.GenerateRandomId(); } while (mSessions.ContainsKey(sessionId));
+                    newSession = new ViewtopSession(sessionId);
+                    mSessions[sessionId] = newSession;
                 }
-                FileServer.SendResponse(response, 
-                    @"{""sid"": " + newSession.SessionId + @",""challenge"":" + newSession.Challenge + "}", 200);
+                newSession.ProcessWebRemoteViewerRequest(context);
                 return;
             }
 
             string sidStr = request.QueryString["sid"];
-            int sid;
-            if (sidStr == null || !int.TryParse(sidStr, out sid))
+            long sid;
+            if (sidStr == null || !long.TryParse(sidStr, out sid))
             {
                 FileServer.SendError(response, "Query must include 'sid'", 400);
                 return;
@@ -68,9 +70,7 @@ namespace Gosub.Viewtop
                     FileServer.SendError(response, "Unknown 'sid'", 400);
                     return;
                 }
-                session.LastRequestTime = DateTime.Now;
             }
-
             session.ProcessWebRemoteViewerRequest(context);
         }
 
@@ -79,7 +79,7 @@ namespace Gosub.Viewtop
             lock (mLock)
             {
                 var now = DateTime.Now;
-                var timedOutSessions = new List<int>();
+                var timedOutSessions = new List<long>();
                 foreach (var sessionKv in mSessions)
                     if ((now - sessionKv.Value.LastRequestTime).TotalSeconds > CONNECTION_TIMEOUT_SEC)
                         timedOutSessions.Add(sessionKv.Key);
