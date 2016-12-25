@@ -78,7 +78,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Viewtop\FrameCollector.cs" />
     <Compile Include="Viewtop\Bitmap32Bits.cs" />
-    <Compile Include="Viewtop\Events.cs" />
+    <Compile Include="Viewtop\MouseAndKeyboard.cs" />
     <Compile Include="Viewtop\Users.cs" />
     <Compile Include="Viewtop\PFXGenerator.cs" />
     <Compile Include="Viewtop\Util.cs" />

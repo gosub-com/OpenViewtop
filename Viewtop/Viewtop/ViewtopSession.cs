@@ -33,9 +33,9 @@ namespace Gosub.Viewtop
         Dictionary<long, FrameInfo> mHistory = new Dictionary<long, FrameInfo>();
         FrameCollector mCollector;
         FrameCompressor mAnalyzer;
-        Events mEvents = new Events();
+        MouseAndKeyboard mEvents = new MouseAndKeyboard();
 
-        class MouseOrKeyEvent
+        class RemoteEvent
         {
             public string Event { get; set; } = "";
             public long Time { get; set; }
@@ -48,7 +48,6 @@ namespace Gosub.Viewtop
 
             // Keyboard
             public int KeyCode;
-            public int KeyChar;
             public bool KeyShift;
             public bool KeyCtrl;
             public bool KeyAlt;
@@ -56,7 +55,7 @@ namespace Gosub.Viewtop
 
         class RemoteEvents
         {
-            public List<MouseOrKeyEvent> Events { get; set; } = new List<MouseOrKeyEvent>();
+            public List<RemoteEvent> Events { get; set; } = new List<RemoteEvent>();
         }
 
         class FrameInfo
@@ -122,7 +121,7 @@ namespace Gosub.Viewtop
             // --- Everything below this requires authentication ---
             if (!mAuthenticated)
             {
-                FileServer.SendError(response, "User must log in", 401);
+                ViewtopServer.SendJsonError(response, "User must be logged in");
                 return;
             }
 
@@ -131,7 +130,7 @@ namespace Gosub.Viewtop
             long sequence;
             if (sequenceStr == null || !long.TryParse(sequenceStr, out sequence))
             {
-                FileServer.SendError(response, "Query 'seq' must be numeric", 400);
+                ViewtopServer.SendJsonError(response, "Query 'seq' must be numeric");
                 return;
             }
 
@@ -150,7 +149,7 @@ namespace Gosub.Viewtop
                 if (WaitForImageOrTimeout(sequence, out frame, request.QueryString))
                     FileServer.SendResponse(response, JsonConvert.SerializeObject(frame), 200);
                 else
-                    FileServer.SendError(response, "Error retrieving draw frame " + sequence, 400);
+                    ViewtopServer.SendJsonError(response, "Error retrieving draw frame " + sequence);
                 return;
             }
 
@@ -163,33 +162,32 @@ namespace Gosub.Viewtop
 
                 foreach (var e in events.Events)
                 {
+                    if (e.Event.StartsWith("mouse") && mCollector != null && mCollector.Scale != 0)
+                        mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, true);
+
                     switch (e.Event)
                     {
-                        case "mousemove":
-                            if (mCollector != null && mCollector.Scale != 0)
-                                mEvents.SetMousePosition(e.Time, 1/mCollector.Scale, e.X, e.Y, true);
-                            break;
                         case "mousedown":
+                            mEvents.MouseButton(MouseAndKeyboard.Action.Down, e.Which);
+                            break;
                         case "mouseup":
-                            if (mCollector != null && mCollector.Scale != 0)
-                                mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, true);
-                            mEvents.MouseButton(e.Event == "mousedown" ? Events.Action.Down : Events.Action.Up, e.Which);
+                            mEvents.MouseButton(MouseAndKeyboard.Action.Up, e.Which);
                             break;
                         case "mousewheel":
-                            if (mCollector != null && mCollector.Scale != 0)
-                                mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, true);
                             mEvents.MouseWheel(e.Delta);
                             break;
-                        case "keypress":
-                            mEvents.KeyPress(e.KeyCode, e.KeyChar, e.KeyShift, e.KeyCtrl, e.KeyAlt);
+                        case "keydown":
+                            mEvents.KeyPress(MouseAndKeyboard.Action.Down, e.KeyCode, e.KeyShift, e.KeyCtrl, e.KeyAlt);
                             break;
-
+                        case "keyup":
+                            mEvents.KeyPress(MouseAndKeyboard.Action.Up, e.KeyCode, e.KeyShift, e.KeyCtrl, e.KeyAlt);
+                            break;
                     }
                 }
                 FileServer.SendResponse(response, "", 200);
                 return;
             }
-            FileServer.SendError(response, "ERROR: Invalid query type", 400);
+            ViewtopServer.SendJsonError(response, "ERROR: Invalid query name - " + query);
         }
 
         void UpdateMousePositionFromDrawQuery(HttpListenerRequest request)

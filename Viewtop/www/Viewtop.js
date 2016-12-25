@@ -53,7 +53,9 @@ function Viewtop(drawString, canvas)
         canvas.onmousedown = OnMouseDown;
         canvas.onmouseup = OnMouseUp;
         canvas.onmousewheel = OnMouseWheel;
+        canvas.onkeydown = OnKeyDown;
         canvas.onkeypress = OnKeyPress;
+        canvas.onkeyup = OnKeyUp;
         canvas.oncontextmenu = function () { return false; }
     }
 
@@ -76,6 +78,8 @@ function Viewtop(drawString, canvas)
         canvas.onmouseup = function () { };
         canvas.onmousewheel = function () { };
         canvas.onkeydown = function () { };
+        canvas.onkeypress = function () { };
+        canvas.onkeyup = function () { };
         canvas.oncontextmenu = function () { return true; }
     }   
 
@@ -98,6 +102,7 @@ function Viewtop(drawString, canvas)
         mouseEvent.Delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
         mKeyAndMouseEvents.push(mouseEvent);
         preventDefault(e);
+        return false;
     }
 
     function GetMouseEvent(eventName, e)
@@ -123,14 +128,25 @@ function Viewtop(drawString, canvas)
         mMouseMoveTime = Date.now();
     }    
 
-    // Called when the user presses a key
+    function OnKeyDown(e)
+    {
+        OnKey(e, "keydown");
+    }
     function OnKeyPress(e)
+    {
+        preventDefault(e);
+    }
+    function OnKeyUp(e)
+    {
+        OnKey(e, "keyup");
+    }
+    // Called when a keyboard event is recorded
+    function OnKey(e, eventName)
     {
         var keyEvent = {};
         keyEvent.Time = Date.now();
-        keyEvent.Event = "keypress";
+        keyEvent.Event = eventName;
         keyEvent.KeyCode = e.keyCode;
-        keyEvent.KeyChar = e.charCode;
         keyEvent.KeyShift = e.shiftKey;
         keyEvent.KeyCtrl = e.ctrlKey;
         keyEvent.KeyAlt = e.altKey;
@@ -141,12 +157,12 @@ function Viewtop(drawString, canvas)
     // Prevent the canvas default action (e.g. no mouse wheel, etc.)
     function preventDefault(e)
     {
+        e.returnValue = false;
         if (e.preventDefault)
         {
             e.preventDefault();
             return;
         }
-        e.returnValue = false;
     }
 
     function StartSession()
@@ -219,13 +235,8 @@ function Viewtop(drawString, canvas)
 
     function SendEvents()
     {
-        console.log(mKeyAndMouseEvents);
-
         var jsonObject = { Events: mKeyAndMouseEvents};
         mKeyAndMouseEvents = [];
-
-        console.log(jsonObject);
-
 
         var sequence = mPutSequence;
         mPutSequence = mPutSequence + 1;
@@ -244,7 +255,6 @@ function Viewtop(drawString, canvas)
             ProcessEvents();
         }
     }
-
 
     function LoadFrame()
     {
@@ -349,7 +359,10 @@ function Viewtop(drawString, canvas)
             return false;
         if (request.status != 200)
         {
-            ShowError(errorMessage);
+            var moreInfo = "";
+            try { moreInfo = ", " + JSON.parse(request.responseText).FAIL; }
+            catch (e) { }
+            ShowError(errorMessage + moreInfo);
             return false;
         }
         return true;

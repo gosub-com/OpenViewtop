@@ -5,6 +5,7 @@ using System.Text;
 using System.Net;
 using System.IO;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace Gosub.Viewtop
 {
@@ -23,18 +24,39 @@ namespace Gosub.Viewtop
         /// </summary>
         public void ProcessWebRemoteViewerRequest(HttpListenerContext context)
         {
+            try
+            {
+                TryProcessWebRemoteViewerRequest(context);
+            }
+            catch (Exception ex)
+            {
+                SendJsonError(context.Response, "Error processing viewtop request: " + ex.Message);
+                Debug.WriteLine("Error processing viewtop request: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Error messages from the viewtop server are in JSON with code 200
+        /// </summary>
+        public static void SendJsonError(HttpListenerResponse response, string message)
+        {
+            FileServer.SendResponse(response, @"{""FAIL"":""" +
+                message.Replace("\"", "\\\"").Replace("\\", "\\\\")
+                + @"""}", 400);
+        }
+
+        /// <summary>
+        /// Handle a web remote view request (each request is in its own thread)
+        /// </summary>
+        void TryProcessWebRemoteViewerRequest(HttpListenerContext context)
+        {
             var request = context.Request;
             var response = context.Response;
 
             string query = request.QueryString["query"];
             if (query == null)
             {
-                FileServer.SendError(response, "Query must include 'query' parameter", 400);
-                return;
-            }
-            if (query == "info")
-            {
-                FileServer.SendResponse(response, "{JSON GOES HERE - Describe screens}", 200);
+                SendJsonError(response, "Query must include 'query' parameter");
                 return;
             }
 
@@ -59,7 +81,7 @@ namespace Gosub.Viewtop
             long sid;
             if (sidStr == null || !long.TryParse(sidStr, out sid))
             {
-                FileServer.SendError(response, "Query must include 'sid'", 400);
+                SendJsonError(response, "Query must include 'sid'");
                 return;
             }
             ViewtopSession session;
@@ -67,7 +89,7 @@ namespace Gosub.Viewtop
             {
                 if (!mSessions.TryGetValue(sid, out session))
                 {
-                    FileServer.SendError(response, "Unknown 'sid'", 400);
+                    SendJsonError(response, "Unknown 'sid'");
                     return;
                 }
             }

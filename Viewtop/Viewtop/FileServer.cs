@@ -122,7 +122,7 @@ namespace Gosub.Viewtop
             var response = context.Response;
             if (path.Contains("..") || path.Contains(sPrivateFileName))
             {
-                SendError(response, "Bad Request", 400);
+                SendHtmlError(response, "Bad Request", 400);
                 return;
             }
 
@@ -149,11 +149,11 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            SendError(response, "File not found", 404);
+            SendHtmlError(response, "File not found", 404);
             return;
         }
 
-        public static void SendError(HttpListenerResponse response, string message, int statusCode)
+        public static void SendHtmlError(HttpListenerResponse response, string message, int statusCode)
         {
             SendResponse(response, "<html><body>ERROR: " + message + "</body><html>", statusCode);
         }
