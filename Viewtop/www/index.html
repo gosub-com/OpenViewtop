@@ -20,10 +20,10 @@
         <div style="display:inline-block;margin-right:10px;">
             <div><b>Password: </b></div>
             <input id="passwordId" type="password" placeholder="Enter Password" name="password"
-                   onkeypress="Javascript: if (event.keyCode == 13) login();">            
+                   onkeypress="Javascript: if (event.keyCode == 13) Login();">            
         </div>
         <div style="display:inline-block">
-            <button type="button" onclick="login()">Log In</button>
+            <button type="button" onclick="Login()">Log In</button>
         </div>
         <div id="errorMessageId" style="display:none;">
             Message
@@ -37,19 +37,20 @@
         
         <!-- Top connected bar -->
         <div style="margin: 0px 0px 2px 0px;">
-            <button type="button" onclick="logout()">Log Out</button>
+            <button type="button" onclick="Logout()">Log Out</button>
+            <button type="button" onclick="FullScreen()" title="Full Screen">[<>]</button>
             Connected to <b>ComputerName</b>
         </div>
 
         <!-- Main Screen-->
-        <canvas id="remoteCanvasId" width="1200" height="600" tabindex="1">Canvas not available.  Please upgrade your browser.</canvas>
+        <canvas id="remoteCanvasId" tabindex="1">
+        Canvas not available.  Please upgrade your browser.
+        </canvas>
 
         <!-- Stats and options -->
         <table id="remoteOptionsId" style="display:block">
             <tr>
                 <td>
-                    <label><input type="checkbox" id="checkDoNotScale" onchange="UpdateOptions()">Actual screen size</label>
-                    <br />
                     <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Full frame analysis (disable delta)</label>
                     <br /> <br />
                     <label><input type="radio" name="compression" id="radioSmartPng" checked="checked" onchange="UpdateOptions()">Smart PNG</label>
@@ -97,9 +98,9 @@
     document.getElementById('unsecureWarningId').style.display = location.protocol === "https:" ? "none" : "block";
 
     // Called when the user clicks the login button
-    function login()
+    function Login()
     {
-        logout();
+        Logout();
 
         mRemoteLoginPage.style.display = "none";
         mRemoteConnectedPage.style.display = "block";
@@ -107,7 +108,7 @@
         mViewer = new Viewtop(mRemoteStats, mRemoteCanvas);
         mViewer.ErrorCallback = function(errorMessage)
         {
-            logout();
+            Logout();
             mErrorMessage.innerHTML = "<b>ERROR:</b> " + errorMessage;
             mErrorMessage.style.display = "block";
         }
@@ -115,7 +116,7 @@
         mViewer.Start(mUsername.value, mPassword.value);
     }
 
-    function logout()
+    function Logout()
     {
         if (mViewer != null)
             mViewer.Stop();
@@ -126,13 +127,21 @@
         mUsername.focus();
     }
 
+    function FullScreen()
+    {
+        if (mRemoteCanvas.requestFullscreen)
+            mRemoteCanvas.requestFullscreen();
+        else if (mRemoteCanvas.webkitRequestFullScreen)
+            mRemoteCanvas.webkitRequestFullScreen();
+        else if (mRemoteCanvas.mozRequestFullScreen)
+            mRemoteCanvas.mozRequestFullScreen();
+    }
+
+
     function UpdateOptions()
     {
         // Check boxes
         var options = "&";
-        if (!document.getElementById('checkDoNotScale').checked)
-            options += "maxwidth=" + mRemoteCanvas.width
-                       + "&maxheight=" + mRemoteCanvas.height + "&";
         if (document.getElementById('checkFullFrame').checked)
             options += "fullframe=true&";
 

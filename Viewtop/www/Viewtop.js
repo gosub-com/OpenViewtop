@@ -16,8 +16,6 @@ function Viewtop(drawString, canvas)
     var mCanvas = canvas;
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
-    var mGetSequence = 1;
-    var mPutSequence = 1;
     var mRunning = false;
     var mUsername = "";
     var mPassword = "";
@@ -31,11 +29,36 @@ function Viewtop(drawString, canvas)
     var mFpsCounter = 0;
     var mFpsTime = Date.now();
 
-    var mGetsOutstanding = 0;
+    var mGetSequence = 1;
     var mGetSendTime = 0;
 
+    var mDrawSequence = 1;
+    var mDrawQueue = {};
+
+    var mPutSequence = 1;
     var mPutsOutstanding = 0;
     var mPutSendTime = 0;
+
+    // Round trip time
+    var mRtt = 400;
+    var mRttSkipsInARow = 0;
+    var RTT_MAX = 1200;
+    var RTT_MIN = 25;
+    var RTT_COEFFICIENT = 0.2;
+    var RTT_TRIGGER_RATIO = 0.5;  // Trigger at middle of RTT
+    var RTT_TRIGGER_MIN_MS = 40;  // Trigger a bit before middle of RTT
+
+    function SetRtt(rtt)
+    {
+        // Ignore net lag hiccups, which usually come in pairs because of double buffering
+        if (rtt > 1.6*mRtt && mRttSkipsInARow++ < 2)
+            return;
+        mRttSkipsInARow = 0;
+
+        // Butterworth filter
+        mRtt = Math.min(Math.max(rtt, RTT_MIN), RTT_MAX) * RTT_COEFFICIENT + (1 - RTT_COEFFICIENT) * mRtt;
+    }
+
 
     // Set draw options (each separated by '&')
     this.DrawOptions = "";
@@ -49,14 +72,14 @@ function Viewtop(drawString, canvas)
         InitializeCanvas();
         StartSession(username, password);
 
-        canvas.onmousemove = OnMouseMove;
-        canvas.onmousedown = OnMouseDown;
-        canvas.onmouseup = OnMouseUp;
-        canvas.onmousewheel = OnMouseWheel;
-        canvas.onkeydown = OnKeyDown;
-        canvas.onkeypress = OnKeyPress;
-        canvas.onkeyup = OnKeyUp;
-        canvas.oncontextmenu = function () { return false; }
+        mCanvas.onmousemove = OnMouseMove;
+        mCanvas.onmousedown = OnMouseDown;
+        mCanvas.onmouseup = OnMouseUp;
+        mCanvas.onmousewheel = OnMouseWheel;
+        mCanvas.onkeydown = OnKeyDown;
+        mCanvas.onkeypress = OnKeyPress;
+        mCanvas.onkeyup = OnKeyUp;
+        mCanvas.oncontextmenu = function () { return false; }
     }
 
     // Stop the session
@@ -73,15 +96,15 @@ function Viewtop(drawString, canvas)
     function StopInternal()
     {
         mRunning = false;
-        canvas.onmousemove = function () { };
-        canvas.onmousedown = function () { };
-        canvas.onmouseup = function () { };
-        canvas.onmousewheel = function () { };
-        canvas.onkeydown = function () { };
-        canvas.onkeypress = function () { };
-        canvas.onkeyup = function () { };
-        canvas.oncontextmenu = function () { return true; }
-    }   
+        mCanvas.onmousemove = function () { };
+        mCanvas.onmousedown = function () { };
+        mCanvas.onmouseup = function () { };
+        mCanvas.onmousewheel = function () { };
+        mCanvas.onkeydown = function () { };
+        mCanvas.onkeypress = function () { };
+        mCanvas.onkeyup = function () { };
+        mCanvas.oncontextmenu = function () { return true; }
+    }
 
     // Called when the user clicks the canvas
     function OnMouseDown(e)
@@ -201,36 +224,54 @@ function Viewtop(drawString, canvas)
         };
     }
 
-    // Main event processing loop, call ProcessEvents every 33 milliseconds
+    // Main event processing loop, call ProcessEvents every 23 milliseconds
     function EventsLoop()
     {
         if (!mRunning)
             return;
-        setTimeout(function () { EventsLoop(); }, 33);
+        setTimeout(function () { EventsLoop(); }, 23);
         ProcessEvents();
     }
 
-    // Process all events.  Called every 33 milliseconds or whenever
+    // Process all events.  Called every 23 milliseconds or whenever
     // something is done processing (draw frame, keyboard, etc.)
     function ProcessEvents()
     {
         if (!mRunning)
             return;
 
-        // Request frame
-        if (mGetsOutstanding == 0)
-            LoadFrame();
 
-        // Request next frame before receiving previous frame 
-        // (i.e. double buffer) to reduce the round trip time latency.  
-        // TBD: Use round trip timer instead of hardcoded value
-        var ROUND_TRIP_TIME = 80;
-        if (mGetsOutstanding == 1 && Date.now() - mGetSendTime > ROUND_TRIP_TIME / 2)
-            LoadFrame();
+        try
+        {
+            // Draw frames from the queue
+            var drawBuffer = mDrawQueue[mDrawSequence];
+            while (drawBuffer)
+            {
+                delete mDrawQueue[mDrawSequence];
+                mDrawSequence++;
+                DrawImages(drawBuffer);
+                drawBuffer = mDrawQueue[mDrawSequence];
+            }
 
-        // Send mouse and keyboard events
-        if (mPutsOutstanding == 0 && mKeyAndMouseEvents.length != 0)
-            SendEvents();
+            // Request frame
+            var getsOutstanding = mGetSequence - mDrawSequence;
+            if (getsOutstanding == 0)
+                LoadFrame();
+
+            // Request next frame before receiving previous frame 
+            // (i.e. double buffer) to reduce the round trip time latency.  
+            if (getsOutstanding == 1 && Date.now() - mGetSendTime > mRtt * RTT_TRIGGER_RATIO - RTT_TRIGGER_MIN_MS)
+                LoadFrame();
+
+            // Send mouse and keyboard events
+            if (mPutsOutstanding == 0 && mKeyAndMouseEvents.length != 0)
+                SendEvents();
+        }
+        catch (e)
+        {
+            mRunning = false;
+            ShowError(e.stack);
+        }
     }
 
     function SendEvents()
@@ -261,53 +302,53 @@ function Viewtop(drawString, canvas)
         var sequence = mGetSequence;
         mGetSequence = mGetSequence + 1;
 
+        // Find canvas size
+        var WINDOW_BORDER_HEIGHT = 40; // Document margin, scroll bar, menu bar at top, etc.
+        var fullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement;
+        var width = fullscreen ? window.innerWidth : document.body.clientWidth;
+        var height = fullscreen ? window.innerHeight : (window.innerHeight - WINDOW_BORDER_HEIGHT);
+
         // Start downloading the draw buffer
-        mGetSendTime = Date.now();
-        mGetsOutstanding++;
+        var sendTime = Date.now();
+        mGetSendTime = sendTime;
         var xhttp = new XMLHttpRequest();
         xhttp.open("GET", "index.ovt?query=draw&sid=" + mSessionId
             + "&seq=" + sequence
             + "&t=" + mGetSendTime
             + "&x=" + mMouseX
             + "&y=" + mMouseY
+            + "&maxwidth=" + width
+            + "&maxheight=" + height
             + "&" + THIS.DrawOptions, true);
         xhttp.send();
         xhttp.onreadystatechange = function ()
         {
             if (!HttpRequestDone(this, "Frame request failed"))
                 return;
-            mGetsOutstanding--;
-
-            // NOTE: This might be early since the images have to be loaded
-            //       by the browser before drawing.  But since that's all
-            //       done locally, it seems unlikely that a new frame could 
-            //       arrive remotely and be drawn out of sequence
-            ProcessEvents();
-
-            var startTime = Date.now();
-            var drawBuffer = JSON.parse(xhttp.responseText);
-            drawBuffer.DrawStartTime = startTime;
-
-            LoadImagesThenDraw(drawBuffer);
+            SetRtt(Date.now() - sendTime);
+            LoadImagesThenQueue(JSON.parse(xhttp.responseText), sequence);
         };        
     }
 
-    // Load all the images in parallel, then draw them
-    function LoadImagesThenDraw(drawBuffer)
-    {        
-        // Load all images, then issue draw after all of them have loaded
+    // Load all the images in parallel, then queue the frame to be drawn in the order received
+    function LoadImagesThenQueue(drawBuffer, sequence)
+    {
         var frames = drawBuffer.Frames;
         var totalImagesLoaded = 0;
         for (var i = 0; i < frames.length; i++)
         {
+            // Ask browser to load each image
             var image = new Image();
             image.onload = ScopeServer(i, image, function(i, image)
             {
+                // Check each loaded image to see if its the last one
                 frames[i].LoadedImage = image;
-
-                // The the images after they are all loaded
                 if (++totalImagesLoaded == frames.length)
-                    DrawImages(drawBuffer);
+                {
+                    // Queue the image
+                    mDrawQueue[sequence] = drawBuffer;
+                    ProcessEvents();
+                }
             });
             image.onerror = function ()
             {
@@ -342,7 +383,6 @@ function Viewtop(drawString, canvas)
 
         // Show stats
         var stats = drawBuffer.Stats;
-        stats.DrawTime = Date.now() - drawBuffer.DrawStartTime;
         stats.FPS = mFps;
         var statsStr = "";
         for (var key in stats)
@@ -438,10 +478,12 @@ function Viewtop(drawString, canvas)
                 targetWidth = n;
                 blocksSourceX = Math.floor((source.width + blockSize - 1) / blockSize);
                 blocksTargetX = Math.floor((targetWidth + blockSize - 1) / blockSize);
+                SetCanvasSize(targetWidth, mCanvas.height);
                 break;
 
             case 'Y': // Target height
                 targetHeight = n;
+                SetCanvasSize(mCanvas.width, targetHeight);
                 break;
 
             case 'B': // Block size                    
@@ -524,6 +566,32 @@ function Viewtop(drawString, canvas)
                 }
                 break;
             }
+        }
+    }
+
+    function SetCanvasSize(width, height)
+    {
+        // NOTE: Firefox and Edge scale the canvas to screen size, which destroys
+        //       the mouse scaling and makes it look ugly when enlarged.
+        //       Chrome centers the canvas nicely, so don't change anything
+        var fullscreenButNotChrome = document.fullscreenElement || document.mozFullScreenElement;
+        if (fullscreenButNotChrome)
+        {
+            // TBD: Should draw the image in the center of the canvas
+            // TBD: This doesn't scale correctly in Edge
+            width = window.innerWidth;
+            height = window.innerHeight;
+        }
+
+        if (mCanvas.width != width)
+        {
+            mCanvas.width = width;
+            mCanvas.style.width = width + "px";
+        }
+        if (mCanvas.height != height)
+        {
+            mCanvas.height = height;
+            mCanvas.style.height = height + "px";
         }
     }
 

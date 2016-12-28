@@ -28,6 +28,7 @@ namespace Gosub.Viewtop
         [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
         public static extern void keybd_event(int bVk, int bScan, int dwFlags, IntPtr dwExtraInfo);
 
+        bool mMouseOnScreen;
         long mMouseMoveTime;
         int mMouseX;
         int mMouseY;
@@ -57,11 +58,20 @@ namespace Gosub.Viewtop
             mMouseMoveTime = remoteTime;
             mMouseX = x;
             mMouseY = y;
-            Cursor.Position = new Point((int)(scale * x), (int)(scale * y));
+
+            var p = new Point((int)(scale * x), (int)(scale * y));
+            mMouseOnScreen = p.X >= 0 && p.X < Screen.PrimaryScreen.Bounds.Width
+                                && p.Y >= 0 && p.Y < Screen.PrimaryScreen.Bounds.Height;
+
+            if (mMouseOnScreen)
+                Cursor.Position = p;
         }
 
         void MouseButton(Action action, Button button)
         {
+            if (!mMouseOnScreen)
+                return;
+
             try
             {
                 int flags = (int)button * (int)action;
@@ -92,6 +102,9 @@ namespace Gosub.Viewtop
 
         public void MouseWheel(int delta)
         {
+            if (!mMouseOnScreen)
+                return;
+
             if (delta >= 0)
                 delta = 120;
             else
@@ -129,6 +142,8 @@ namespace Gosub.Viewtop
             { ',', "{PRTSC}"},
             { '-', "{INSERT}" },
             { '.', "{DELETE}" },
+            { ';', ";" }, // Firefox
+            { '=', "=" }, // Firefox
             { 'p', "{F1}" },
             { 'q', "{F2}" },
             { 'r', "{F3}" },
@@ -143,6 +158,10 @@ namespace Gosub.Viewtop
             { '{', "{F12}" },
             { 144, "{NUMLOCK}" },
             { 145, "{SCROLLLOCK}" },
+            { 173, "-" }, // Firefox
+            { 186, ";" },
+            { 187, "=" },
+            { 189, "-" },
             { 188, "," },
             { 190, "." },
             { 191, "/" },
