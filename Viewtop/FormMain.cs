@@ -33,6 +33,8 @@ namespace Gosub.Viewtop
         private void FormMain_Load(object sender, EventArgs e)
         {
             Text = App.Name + ", version " + App.Version;
+            MouseAndKeyboard.MainForm = this;
+            Clip.MainForm = this;
             StopWebServer();
             comboLatency.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
             comboLatency.SelectedIndex = 0;

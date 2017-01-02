@@ -6,6 +6,42 @@
     <meta content="utf-8" http-equiv="encoding">
     <script type="text/javascript" src="Sha256.js"></script>
     <script type="text/javascript" src="Viewtop.js"></script>
+    <style>
+
+body { background: lavender;}
+
+h1 { color: darkblue;}
+
+.button 
+{
+  font: 13px Arial;
+  text-decoration:none;
+  background: #E1E1E1;
+  background:linear-gradient(#f6f6f6,#dedede);
+  color: #000000;
+  padding: 2px 6px 3px 6px;
+  margin-bottom: 4px;
+  border: 1px solid #ADADAD;
+}
+
+.button:hover
+{
+  background: #E5F1FB;
+  background:linear-gradient(#E5F1FB,#E5F1FB);
+  border: 1px solid #0078D7;
+}
+
+/* Remove extra button padding in Firefox */
+button::-moz-focus-inner 
+{
+    border:0;
+    padding:0;
+    margin-top:-1px; 
+	margin-bottom: 0;
+}
+
+
+    </style>
 </head>
 <body>
     <!-- Login form -->
@@ -23,7 +59,7 @@
                    onkeypress="Javascript: if (event.keyCode == 13) Login();">            
         </div>
         <div style="display:inline-block">
-            <button type="button" onclick="Login()">Log In</button>
+            <button class="button" type="button" onclick="Login()">Log In</button>
         </div>
         <div id="errorMessageId" style="display:none;">
             Message
@@ -37,9 +73,10 @@
         
         <!-- Top connected bar -->
         <div style="margin: 0px 0px 2px 0px;">
-            <button type="button" onclick="Logout()">Log Out</button>
-            <button type="button" onclick="FullScreen()" title="Full Screen">[<>]</button>
-            Connected to <b>ComputerName</b>
+            <button class="button" type="button" onclick="Logout()">Log Out</button>
+            <button class="button" type="button" onclick="FullScreen()" title="Full Screen">[ ]</button>
+            <a class="button" id="clipboardId">Clipboard</a>
+            <b id="computerNameId" style="float:right;margin-right:4px;">(unknown)</b>
         </div>
 
         <!-- Main Screen-->
@@ -112,6 +149,8 @@
             mErrorMessage.innerHTML = "<b>ERROR:</b> " + errorMessage;
             mErrorMessage.style.display = "block";
         }
+        mViewer.ClipboardButton = document.getElementById('clipboardId');
+        mViewer.ComputerNameLabel = document.getElementById('computerNameId');
         UpdateOptions();
         mViewer.Start(mUsername.value, mPassword.value);
     }

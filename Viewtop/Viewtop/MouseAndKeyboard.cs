@@ -17,6 +17,12 @@ namespace Gosub.Viewtop
     /// </summary>
     class MouseAndKeyboard
     {
+        /// <summary>
+        /// This must be set to the main form before using this class
+        /// so that SendKeys can be invoked on the GUI thread.
+        /// </summary>
+        public static Form MainForm;
+
         const int MOUSEEVENTF_WHEEL = 0x800;
         const int SHIFT_CODE = 16;
         const int CTRL_CODE = 17;
@@ -215,7 +221,7 @@ namespace Gosub.Viewtop
             }
 
             // NOTE: SendKeys needs to be called from the GUI thread
-            Application.OpenForms[0].Invoke((MethodInvoker)delegate 
+            MainForm.Invoke((MethodInvoker)delegate 
             {
                 try
                 {

@@ -142,15 +142,18 @@ namespace Gosub.Viewtop
             if (File.Exists(path))
             {
                 // Send local file back to client
-                var stream = File.OpenRead(path);
-                response.ContentLength64 = stream.Length;
-                stream.CopyTo(response.OutputStream);
-                stream.Close();
+                SendFile(response, path);
                 return;
             }
-
             SendHtmlError(response, "File not found", 404);
-            return;
+        }
+
+        public static void SendFile(HttpListenerResponse response, string path)
+        {
+            var stream = File.OpenRead(path);
+            response.ContentLength64 = stream.Length;
+            stream.CopyTo(response.OutputStream);
+            stream.Close();
         }
 
         public static void SendHtmlError(HttpListenerResponse response, string message, int statusCode)

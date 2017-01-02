@@ -93,6 +93,9 @@ function Viewtop(drawString, canvas)
     {
     }
 
+    this.ClipboardButton = {};
+    this.ComputerNameLabel = {};
+
     function StopInternal()
     {
         mRunning = false;
@@ -190,38 +193,35 @@ function Viewtop(drawString, canvas)
 
     function StartSession()
     {
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername, true);
-        xhttp.send();
-        xhttp.onreadystatechange = function ()
+        HttpGet("index.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername,
+        function ()
         {
-            if (!HttpRequestDone(this, "Start session request failed"))
+            if (!HttpDone(this, "Start session request failed"))
                 return;
-            var sessionInfo = JSON.parse(xhttp.responseText);
+            var sessionInfo = JSON.parse(this.responseText);
             mSessionId = sessionInfo.sid;
             Login(sessionInfo.salt, sessionInfo.challenge);
-        };
+        });
     }
 
     function Login(salt, challenge)
     {
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=login&sid=" + mSessionId
-            + "&username=" + mUsername
-            + "&hash=" + Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase());
-        xhttp.send();
-        xhttp.onreadystatechange = function ()
+        HttpGet("index.ovt?query=login&sid=" + mSessionId
+                + "&username=" + mUsername
+                + "&hash=" + Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase(),
+        function ()
         {
-            if (!HttpRequestDone(this, "Login request failed"))
+            if (!HttpDone(this, "Login request failed"))
                 return;
-            var loginInfo = JSON.parse(xhttp.responseText);
-            if (!loginInfo.pass)
+            var loginInfo = JSON.parse(this.responseText);
+            if (!loginInfo.LoggedIn)
             {
                 ShowError("Invalid user name or password");
                 return;
             }
+            THIS.ComputerNameLabel.innerHTML = loginInfo.ComputerName;
             EventsLoop();
-        };
+        });
     }
 
     // Main event processing loop, call ProcessEvents every 23 milliseconds
@@ -240,7 +240,6 @@ function Viewtop(drawString, canvas)
         if (!mRunning)
             return;
 
-
         try
         {
             // Draw frames from the queue
@@ -249,7 +248,7 @@ function Viewtop(drawString, canvas)
             {
                 delete mDrawQueue[mDrawSequence];
                 mDrawSequence++;
-                DrawImages(drawBuffer);
+                ProcessData(drawBuffer);
                 drawBuffer = mDrawQueue[mDrawSequence];
             }
 
@@ -284,17 +283,15 @@ function Viewtop(drawString, canvas)
 
         mPutSendTime = Date.now();
         mPutsOutstanding++;
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("PUT", "index.ovt?query=events&sid=" + mSessionId
-            + "&seq=" + sequence, true);
-        xhttp.send(JSON.stringify(jsonObject));
-        xhttp.onreadystatechange = function()
-        {
-            if (!HttpRequestDone(this, "Send events failed"))
+        HttpPut("index.ovt?query=events&sid=" + mSessionId + "&seq=" + sequence,
+                JSON.stringify(jsonObject),
+        function ()
+        { 
+            if (!HttpDone(this, "Send events failed"))
                 return;
             mPutsOutstanding--;
             ProcessEvents();
-        }
+        });
     }
 
     function LoadFrame()
@@ -311,23 +308,21 @@ function Viewtop(drawString, canvas)
         // Start downloading the draw buffer
         var sendTime = Date.now();
         mGetSendTime = sendTime;
-        var xhttp = new XMLHttpRequest();
-        xhttp.open("GET", "index.ovt?query=draw&sid=" + mSessionId
-            + "&seq=" + sequence
-            + "&t=" + mGetSendTime
-            + "&x=" + mMouseX
-            + "&y=" + mMouseY
-            + "&maxwidth=" + width
-            + "&maxheight=" + height
-            + "&" + THIS.DrawOptions, true);
-        xhttp.send();
-        xhttp.onreadystatechange = function ()
+        HttpGet("index.ovt?query=draw&sid=" + mSessionId
+                        + "&seq=" + sequence
+                        + "&t=" + mGetSendTime
+                        + "&x=" + mMouseX
+                        + "&y=" + mMouseY
+                        + "&maxwidth=" + width
+                        + "&maxheight=" + height
+                        + "&" + THIS.DrawOptions,
+        function ()
         {
-            if (!HttpRequestDone(this, "Frame request failed"))
+            if (!HttpDone(this, "Frame request failed"))
                 return;
             SetRtt(Date.now() - sendTime);
-            LoadImagesThenQueue(JSON.parse(xhttp.responseText), sequence);
-        };        
+            LoadImagesThenQueue(JSON.parse(this.responseText), sequence);
+        });
     }
 
     // Load all the images in parallel, then queue the frame to be drawn in the order received
@@ -366,6 +361,64 @@ function Viewtop(drawString, canvas)
         return function () { return f(param1, param2); }
     }
 
+    function ProcessData(drawBuffer)
+    {
+        SetClipboard(drawBuffer);
+        DrawImages(drawBuffer);
+    }
+
+
+    var mClipChangedTime = 0;
+    function SetClipboard(drawBuffer)
+    {
+        var clip = THIS.ClipboardButton;
+
+        if (drawBuffer.Clip.Type == "Text")
+        {
+            // Download text
+            clip.style = "";
+            clip.title = "Download text";
+            clip.setAttribute('href', 'text');
+            clip.setAttribute('download', 'text');
+            clip.onclick = function ()
+            {
+                // Download text, then show message to allow user to copy using CTRL-C
+                HttpGet("index.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime,
+                function ()
+                {
+                    if (!HttpDone(this, "Copy clipboard text failed"))
+                        return;
+                    window.prompt("Copy to clipboard: Ctrl+C, Enter", this.responseText);
+                });
+                return false;
+            };
+        }
+        else if (drawBuffer.Clip.Type == "File")
+        {
+            // Download file
+            clip.style = "";
+            clip.title = "DOWNLOAD FILE: '" + drawBuffer.Clip.FileName + "'"
+                + (drawBuffer.Clip.FileCount == 1 ? "" : ", (" + drawBuffer.Clip.FileCount + " files)");
+            clip.setAttribute('href', "index.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime);
+            clip.setAttribute('download', drawBuffer.Clip.FileName);
+            clip.onclick = function () { };
+        }
+        else if (drawBuffer.Clip.Type == "")
+        {
+            // Disabled
+            clip.style = "color:#606060;background:#D0D0D0;border: 1px solid #ADADAD";
+            clip.setAttribute('href', '');
+            clip.setAttribute('download', '');
+            clip.onclick = function () { return false; };
+        }
+
+        // Flash when new data arrives
+        if (drawBuffer.Clip.Changed)
+            mClipChangedTime = Date.now();
+        if (Date.now() - mClipChangedTime < 250)
+            clip.style = "background:#FFF080;color:#000060;border: 2px solid #B09820";
+    }
+
     function DrawImages(drawBuffer)
     {
         mFpsCounter++;
@@ -391,7 +444,23 @@ function Viewtop(drawString, canvas)
         mDrawString.innerHTML = statsStr;
     }
 
-    function HttpRequestDone(request, errorMessage)
+    function HttpPut(url, data, onreadystatechangefunction)
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = onreadystatechangefunction;
+        xhttp.open("PUT", url, true);
+        xhttp.send(data);
+    }
+
+    function HttpGet(url, onreadystatechangefunction)
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = onreadystatechangefunction;
+        xhttp.open("GET", url, true);
+        xhttp.send();
+    }
+
+    function HttpDone(request, errorMessage)
     {
         if (!mRunning)
             return false;
