@@ -1,8 +1,8 @@
 ﻿[Setup]
 AppName=Open Viewtop
-AppVersion=0.0.4
+AppVersion=0.0.5
 OutputDir=.
-OutputBaseFilename=SetupOpenViewtop-0.0.4
+OutputBaseFilename=SetupOpenViewtop-0.0.5
 UsePreviousAppDir=false
 UsePreviousGroup=false
 DefaultDirName={pf}\Gosub\Open Viewtop
@@ -34,8 +34,10 @@ Name: "{group}\Uninstall Open Viewtop"; Filename: "{uninstallexe}"
 // Code originally from http://news.jrsoftware.org/news/innosetup/msg43799.html
 
 const
-  HTTPS_PORT = 8085;
-  HTTP_PORT = 8086;
+  PORT_HTTPS = 24707;
+  PORT_HTTP = 24708;
+  PORT_HTTPS_ALT = 24709;
+  PORT_HTTP_ALT = 24710;
 
   NET_FW_SCOPE_ALL = 0;
   NET_FW_IP_VERSION_ANY = 2;
@@ -155,9 +157,14 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   // Add firewall rules
   if CurStep = ssPostInstall then begin
+    // Allow direct communications to Viewtop.exe (i.e. Beacon, UDP, TCP)
     SetFirewallException('Open Viewtop', ExpandConstant('{app}')+'\Gosub.Viewtop.exe');
-    SetFirewallPortException('Open Viewport HTTPS', NET_FW_PROTOCOL_TCP, HTTPS_PORT);
-    SetFirewallPortException('Open Viewport HTTP', NET_FW_PROTOCOL_TCP, HTTP_PORT);
+
+	// NOTE: These are necessary because HTTP goes through a driver instead of direct to Viewtop.exe
+    SetFirewallPortException('Open Viewport HTTPS', NET_FW_PROTOCOL_TCP, PORT_HTTPS);
+    SetFirewallPortException('Open Viewport HTTP', NET_FW_PROTOCOL_TCP, PORT_HTTP);
+    SetFirewallPortException('Open Viewport HTTPS ALT', NET_FW_PROTOCOL_TCP, PORT_HTTPS_ALT);
+    SetFirewallPortException('Open Viewport HTTP ALT', NET_FW_PROTOCOL_TCP, PORT_HTTP_ALT);
   end;
 end;
 
@@ -166,7 +173,9 @@ begin
   // Remove firewall rules after uninstalling
   if CurUninstallStep = usPostUninstall then begin
      RemoveFirewallException(ExpandConstant('{app}')+'\Gosub.Viewtop.exe');
-     RemoveFirewallPortException(NET_FW_PROTOCOL_TCP, HTTPS_PORT);
-     RemoveFirewallPortException(NET_FW_PROTOCOL_TCP, HTTP_PORT);
+     RemoveFirewallPortException(NET_FW_PROTOCOL_TCP, PORT_HTTPS);
+     RemoveFirewallPortException(NET_FW_PROTOCOL_TCP, PORT_HTTP);
+     RemoveFirewallPortException(NET_FW_PROTOCOL_TCP, PORT_HTTPS_ALT);
+     RemoveFirewallPortException(NET_FW_PROTOCOL_TCP, PORT_HTTP_ALT);
   end;
 end;

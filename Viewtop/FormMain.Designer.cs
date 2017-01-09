@@ -28,6 +28,7 @@
         /// </summary>
         private void InitializeComponent()
         {
+            this.components = new System.ComponentModel.Container();
             this.buttonStart = new System.Windows.Forms.Button();
             this.buttonStop = new System.Windows.Forms.Button();
             this.labelSecureLink = new System.Windows.Forms.LinkLabel();
@@ -42,8 +43,19 @@
             this.buttonChangePassword = new System.Windows.Forms.Button();
             this.buttonDeleteUser = new System.Windows.Forms.Button();
             this.buttonNewUser = new System.Windows.Forms.Button();
+            this.timerBeacon = new System.Windows.Forms.Timer(this.components);
+            this.textName = new System.Windows.Forms.TextBox();
+            this.label3 = new System.Windows.Forms.Label();
+            this.timerUpdateRemoteGrid = new System.Windows.Forms.Timer(this.components);
+            this.labelLocalIpAddress = new System.Windows.Forms.Label();
+            this.label4 = new System.Windows.Forms.Label();
+            this.gridRemote = new Gosub.Viewtop.GridWithoutAutoSelect();
+            this.columnName = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.columnIp = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.columnStatus = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.groupBox1.SuspendLayout();
             this.groupBox2.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.gridRemote)).BeginInit();
             this.SuspendLayout();
             // 
             // buttonStart
@@ -72,7 +84,7 @@
             // 
             this.labelSecureLink.AutoSize = true;
             this.labelSecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.labelSecureLink.Location = new System.Drawing.Point(174, 15);
+            this.labelSecureLink.Location = new System.Drawing.Point(174, 16);
             this.labelSecureLink.Name = "labelSecureLink";
             this.labelSecureLink.Size = new System.Drawing.Size(122, 20);
             this.labelSecureLink.TabIndex = 3;
@@ -83,10 +95,10 @@
             // labelUnsecureLink
             // 
             this.labelUnsecureLink.AutoSize = true;
-            this.labelUnsecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.labelUnsecureLink.Location = new System.Drawing.Point(174, 35);
+            this.labelUnsecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelUnsecureLink.Location = new System.Drawing.Point(175, 42);
             this.labelUnsecureLink.Name = "labelUnsecureLink";
-            this.labelUnsecureLink.Size = new System.Drawing.Size(140, 20);
+            this.labelUnsecureLink.Size = new System.Drawing.Size(95, 13);
             this.labelUnsecureLink.TabIndex = 5;
             this.labelUnsecureLink.TabStop = true;
             this.labelUnsecureLink.Text = "labelUnsecureLink";
@@ -200,11 +212,101 @@
             this.buttonNewUser.UseVisualStyleBackColor = true;
             this.buttonNewUser.Click += new System.EventHandler(this.buttonNewUser_Click);
             // 
+            // timerBeacon
+            // 
+            this.timerBeacon.Tick += new System.EventHandler(this.timerBeacon_Tick);
+            // 
+            // textName
+            // 
+            this.textName.Location = new System.Drawing.Point(481, 59);
+            this.textName.Name = "textName";
+            this.textName.Size = new System.Drawing.Size(112, 20);
+            this.textName.TabIndex = 9;
+            this.textName.TextChanged += new System.EventHandler(this.textName_TextChanged);
+            // 
+            // label3
+            // 
+            this.label3.AutoSize = true;
+            this.label3.Location = new System.Drawing.Point(412, 62);
+            this.label3.Name = "label3";
+            this.label3.Size = new System.Drawing.Size(63, 13);
+            this.label3.TabIndex = 10;
+            this.label3.Text = "Nick Name:";
+            // 
+            // timerUpdateRemoteGrid
+            // 
+            this.timerUpdateRemoteGrid.Enabled = true;
+            this.timerUpdateRemoteGrid.Interval = 1000;
+            this.timerUpdateRemoteGrid.Tick += new System.EventHandler(this.timerUpdateRemoteGrid_Tick);
+            // 
+            // labelLocalIpAddress
+            // 
+            this.labelLocalIpAddress.AutoSize = true;
+            this.labelLocalIpAddress.Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelLocalIpAddress.Location = new System.Drawing.Point(175, 62);
+            this.labelLocalIpAddress.Name = "labelLocalIpAddress";
+            this.labelLocalIpAddress.Size = new System.Drawing.Size(142, 13);
+            this.labelLocalIpAddress.TabIndex = 12;
+            this.labelLocalIpAddress.Text = "Local IP address: (unknown)";
+            // 
+            // label4
+            // 
+            this.label4.AutoSize = true;
+            this.label4.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.label4.Location = new System.Drawing.Point(174, 99);
+            this.label4.Name = "label4";
+            this.label4.Size = new System.Drawing.Size(152, 20);
+            this.label4.TabIndex = 13;
+            this.label4.Text = "Remote Computers:";
+            // 
+            // gridRemote
+            // 
+            this.gridRemote.AllowUserToAddRows = false;
+            this.gridRemote.AllowUserToDeleteRows = false;
+            this.gridRemote.AllowUserToResizeRows = false;
+            this.gridRemote.BackgroundColor = System.Drawing.SystemColors.Window;
+            this.gridRemote.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            this.gridRemote.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
+            this.columnName,
+            this.columnIp,
+            this.columnStatus});
+            this.gridRemote.EditMode = System.Windows.Forms.DataGridViewEditMode.EditProgrammatically;
+            this.gridRemote.GridColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
+            this.gridRemote.Location = new System.Drawing.Point(178, 122);
+            this.gridRemote.Name = "gridRemote";
+            this.gridRemote.RowHeadersVisible = false;
+            this.gridRemote.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.gridRemote.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
+            this.gridRemote.Size = new System.Drawing.Size(415, 172);
+            this.gridRemote.TabIndex = 11;
+            this.gridRemote.CellContentClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.gridRemote_CellContentClick);
+            // 
+            // columnName
+            // 
+            this.columnName.HeaderText = "Name";
+            this.columnName.Name = "columnName";
+            this.columnName.Width = 180;
+            // 
+            // columnIp
+            // 
+            this.columnIp.HeaderText = "IP Address";
+            this.columnIp.Name = "columnIp";
+            // 
+            // columnStatus
+            // 
+            this.columnStatus.HeaderText = "Status";
+            this.columnStatus.Name = "columnStatus";
+            // 
             // FormMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(580, 306);
+            this.ClientSize = new System.Drawing.Size(607, 309);
+            this.Controls.Add(this.label4);
+            this.Controls.Add(this.labelLocalIpAddress);
+            this.Controls.Add(this.gridRemote);
+            this.Controls.Add(this.label3);
+            this.Controls.Add(this.textName);
             this.Controls.Add(this.groupBox2);
             this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.labelUnsecureLink);
@@ -213,11 +315,13 @@
             this.Controls.Add(this.buttonStart);
             this.Name = "FormMain";
             this.Text = "Open Viewtop";
+            this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormMain_FormClosing);
             this.Load += new System.EventHandler(this.FormMain_Load);
             this.Shown += new System.EventHandler(this.FormMain_Shown);
             this.groupBox1.ResumeLayout(false);
             this.groupBox1.PerformLayout();
             this.groupBox2.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)(this.gridRemote)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -239,6 +343,16 @@
         private System.Windows.Forms.Button buttonChangePassword;
         private System.Windows.Forms.Button buttonDeleteUser;
         private System.Windows.Forms.Button buttonNewUser;
+        private System.Windows.Forms.Timer timerBeacon;
+        private System.Windows.Forms.TextBox textName;
+        private System.Windows.Forms.Label label3;
+        private GridWithoutAutoSelect gridRemote;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnName;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnIp;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnStatus;
+        private System.Windows.Forms.Timer timerUpdateRemoteGrid;
+        private System.Windows.Forms.Label labelLocalIpAddress;
+        private System.Windows.Forms.Label label4;
     }
 }
 

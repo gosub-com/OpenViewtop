@@ -17,13 +17,26 @@ namespace Gosub.Viewtop
 {
     public partial class FormMain : Form
     {
-        const string HTTPS_PORT = "8085";
-        const string HTTP_PORT = "8086";
+        const string HTTPS_PORT = "24707";
+        const string HTTP_PORT = "24708";
+        const string BROADCAST_HEADER = "OVT:";
+        const int PURGE_PEER_AFTER_EXIT_MS = 3000;
+        const int PURGE_PEER_LOST_CONNECTION_MS = 8000;
+        const int PROBLEM_PEER_TIME_MS = 4000;
 
         FileServer mFileServer;
         ViewtopServer mOvtServer;
-        FrameCollector mCollector;
-        FrameCompressor mAnalyzer;
+        Beacon mBeacon = new Beacon();
+        PeerInfo mPeerInfo = new PeerInfo();
+
+
+        class PeerInfo : Beacon.Info
+        {
+            public string ComputerName = "";
+            public string NickName = "";
+            public string HttpsPort = "";
+            public string HttpPort = "";
+        }
 
         public FormMain()
         {
@@ -46,27 +59,75 @@ namespace Gosub.Viewtop
         {
             Show();
             Refresh();
-            var userFile = LoadUserNamesListBox();
+            var userFile = LoadUserFile();
+            LoadUserNamesListBox(userFile);
 
             // Ask to create a new user if there are none
             if (userFile.Users.Count == 0)
             {
-                CreateNewUser("You must create a user name and password:");
-                if (UserFile.Load().Users.Count == 0)
+                CreateNewUser(userFile, "You must create a user name and password:");
+                SaveUserFile(userFile);
+                if (userFile.Users.Count == 0)
                     MessageBox.Show(this, "No one will be able to log on to the server until you create a username and password!", App.Name);
-                LoadUserNamesListBox();
+                LoadUserNamesListBox(userFile);
             }
             StartWebServer();
+
+            try
+            {
+                mPeerInfo.ComputerName = Dns.GetHostName();
+                mPeerInfo.NickName = textName.Text;
+                mPeerInfo.HttpsPort = HTTPS_PORT;
+                mPeerInfo.HttpPort = HTTP_PORT;
+                mBeacon.Start(BROADCAST_HEADER, mPeerInfo);
+                timerBeacon.Enabled = true;
+            }
+            catch (Exception ex)
+            {                
+                MessageBox.Show(this, "Error starting beacon: " + ex.Message, App.Name);
+            }
+            if (timerBeacon.Enabled && mBeacon.GetBroadcastAddresses().Length == 0)
+            {
+                MessageBox.Show(this, "Warning: No networks were detected.");
+            }
         }
 
-        UserFile LoadUserNamesListBox()
+        private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
         {
-            var userFile = UserFile.Load();
+            mBeacon.Stop();
+        }
+
+        UserFile LoadUserFile()
+        {
+            try
+            {
+                return UserFile.Load();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Error loading user files: " + ex.Message);
+            }
+            return new UserFile();
+        }
+
+        void SaveUserFile(UserFile users)
+        {
+            try
+            {
+                UserFile.Save(users);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Error loading user files: " + ex.Message);
+            }
+        }
+
+        void LoadUserNamesListBox(UserFile userFile)
+        {
             listUsers.Items.Clear();
             foreach (var user in userFile.Users)
                 listUsers.Items.Add(user.UserName);
             UpdateGui();
-            return userFile;
         }
 
         void UpdateGui()
@@ -75,7 +136,7 @@ namespace Gosub.Viewtop
             buttonChangePassword.Enabled = listUsers.SelectedIndex >= 0;
         }
 
-        void CreateNewUser(string message)
+        void CreateNewUser(UserFile userFile, string message)
         {
             var passwordForm = new FormPassword();
             passwordForm.Message = message;
@@ -83,7 +144,6 @@ namespace Gosub.Viewtop
             if (!passwordForm.Accepted)
                 return;
 
-            var userFile = UserFile.Load();
             var user = userFile.Find(passwordForm.UserName);
             if (user != null)
             {
@@ -96,7 +156,6 @@ namespace Gosub.Viewtop
             user.UserName = passwordForm.UserName;
             user.ResetPassword(passwordForm.Password);
             userFile.Users.Add(user);
-            UserFile.Save(userFile);
         }
 
         private void buttonStart_Click(object sender, EventArgs e)
@@ -148,8 +207,6 @@ namespace Gosub.Viewtop
                 // Setup server
                 mFileServer = new FileServer(httpPrefixes.ToArray(), Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www"));
                 mOvtServer = new ViewtopServer();
-                mCollector = new FrameCollector();
-                mAnalyzer = new FrameCompressor();
                 var ovtServer = mOvtServer; // Do not capture the field, only the local
                 mFileServer.SetRequestHandler("ovt", (context) => { ovtServer.ProcessWebRemoteViewerRequest(context); });
                 mFileServer.Start();
@@ -161,14 +218,14 @@ namespace Gosub.Viewtop
                 labelSecureLink.Text = "Error starting server";
                 return;
             }
-            string link = "https://" + machineName + ":" + HTTPS_PORT + "/";
+            string link = "https://" + machineName + ":" + HTTPS_PORT;
             string text = "Secure: ";
             labelSecureLink.Text = text + link;
             labelSecureLink.Links.Clear();
             labelSecureLink.Links.Add(text.Length, link.Length, link);
             labelSecureLink.Enabled = true;
 
-            link = "http://" + machineName + ":" + HTTP_PORT + "/";
+            link = "http://" + machineName + ":" + HTTP_PORT;
             text = "Unsecure: ";
             labelUnsecureLink.Text = text + link;
             labelUnsecureLink.Links.Clear();
@@ -186,8 +243,6 @@ namespace Gosub.Viewtop
                 mFileServer.Stop();
             mFileServer = null;
             mOvtServer = null;
-            mCollector = null;
-            mAnalyzer = null;
 
             labelSecureLink.Text = "Web Server stopped";
             labelSecureLink.Enabled = false;
@@ -297,8 +352,10 @@ namespace Gosub.Viewtop
 
         private void buttonNewUser_Click(object sender, EventArgs e)
         {
-            CreateNewUser("Create a new user:");
-            LoadUserNamesListBox();
+            var userFile = LoadUserFile();
+            CreateNewUser(userFile, "Create a new user:");
+            SaveUserFile(userFile);
+            LoadUserNamesListBox(userFile);
         }
 
         private void buttonDeleteUser_Click(object sender, EventArgs e)
@@ -307,17 +364,17 @@ namespace Gosub.Viewtop
                 return;
             if (MessageBox.Show(this, "Are you sure you want to delte this user?", App.Name, MessageBoxButtons.YesNo) == DialogResult.No)
                 return;
-            var userFile = UserFile.Load();
+            var userFile = LoadUserFile();
             userFile.Remove((string)listUsers.Items[listUsers.SelectedIndex]);
-            UserFile.Save(userFile);
-            LoadUserNamesListBox();
+            SaveUserFile(userFile);
+            LoadUserNamesListBox(userFile);
         }
 
         private void buttonChangePassword_Click(object sender, EventArgs e)
         {
             if (listUsers.SelectedIndex < 0)
                 return;
-            var userFile = UserFile.Load();
+            var userFile = LoadUserFile();
             var user = userFile.Find((string)listUsers.Items[listUsers.SelectedIndex]);
             if (user == null)
                 return;
@@ -330,8 +387,111 @@ namespace Gosub.Viewtop
             if (!passwordForm.Accepted)
                 return;
             user.ResetPassword(passwordForm.Password);
-            UserFile.Save(userFile);
+            SaveUserFile(userFile);
         }
 
+        private void timerBeacon_Tick(object sender, EventArgs e)
+        {
+            mBeacon.Update();
+        }
+
+        private void textName_TextChanged(object sender, EventArgs e)
+        {
+            mPeerInfo.NickName = textName.Text;
+        }
+
+        private void timerUpdateRemoteGrid_Tick(object sender, EventArgs e)
+        {
+            // Update list of remote computers
+            var now = DateTime.Now;
+            mBeacon.PurgePeers(PURGE_PEER_AFTER_EXIT_MS, PURGE_PEER_LOST_CONNECTION_MS);
+            var peers = mBeacon.GetPeers();
+            gridRemote.Rows.Clear();
+            foreach (var peer in peers)
+            {
+                // Ignore this compurer
+                if (peer.ThisBeacon)
+                    continue;
+
+                var info = (PeerInfo)peer.Info;
+                var lastTimeReceived = (now - peer.TimeReceived).TotalMilliseconds;
+
+                string status;
+                Color color;
+                if (info.State == Beacon.State.Exit)
+                {
+                    status = "Exiting...";
+                    color = Color.Blue;
+                }
+                else if (lastTimeReceived > PROBLEM_PEER_TIME_MS)
+                {
+                    status = "Lost connection!";
+                    color = Color.Red;
+                }
+                else if (!peer.ConnectionEstablished)
+                {
+                    status = "Connecting...";
+                    color = Color.Gray;
+                }
+                else if (peer.UsingNat)
+                {
+                    status = "Using NAT";
+                    color = Color.Red;
+                }
+                else
+                {
+                    status = "Ok";
+                    color = Color.Black;
+                }
+
+                // Add grid row
+                string linkComputerName = "https://" + info.ComputerName + ":" + info.HttpsPort;
+                string linkIpAddress = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
+                var name = info.NickName.Trim() == "" ? "" : " (" + info.NickName + ")";
+                gridRemote.Rows.Add(
+                    new GridLink(info.ComputerName + name, linkComputerName),
+                    new GridLink(peer.EndPoint.Address.ToString(), linkIpAddress),
+                    new GridLink(status, linkIpAddress));
+                int row = gridRemote.Rows.Count - 1;
+                gridRemote[0, row].Style.ForeColor = color;
+                gridRemote[1, row].Style.ForeColor = color;
+                gridRemote[2, row].Style.ForeColor = color;
+            }
+
+            // Display local IP address
+            string ipAddresses = "";
+            foreach (var ip in mBeacon.GetLocalAddresses())
+            {
+                if (ipAddresses != "")
+                    ipAddresses += ", ";
+                ipAddresses += ip.ToString();
+            }
+            labelLocalIpAddress.Text = "Local IP address: " + (ipAddresses == "" ? "(unknown)" : ipAddresses);
+        }
+
+        private void gridRemote_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0 || e.ColumnIndex < 0)
+                return;
+            Process.Start(((GridLink)gridRemote[e.ColumnIndex, e.RowIndex].Value).Link);
+        }
+
+        /// <summary>
+        /// Helper class for the grid
+        /// </summary>
+        class GridLink
+        {
+            public string Text = "";
+            public string Link = "";
+            public GridLink(string text, string link)
+            {
+                Text = text;
+                Link = link;
+            }
+            public override string ToString()
+            {
+                return Text;
+            }
+        }
     }
 }

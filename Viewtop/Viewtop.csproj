@@ -67,6 +67,13 @@
     <Compile Include="FormPassword.Designer.cs">
       <DependentUpon>FormPassword.cs</DependentUpon>
     </Compile>
+    <Compile Include="GridWithoutAutoSelect.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="GridWithoutAutoSelect.Designer.cs">
+      <DependentUpon>GridWithoutAutoSelect.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Viewtop\Beacon.cs" />
     <Compile Include="Viewtop\BlockWriter.cs" />
     <Compile Include="Viewtop\Clip.cs" />
     <Compile Include="Viewtop\FileServer.cs" />
