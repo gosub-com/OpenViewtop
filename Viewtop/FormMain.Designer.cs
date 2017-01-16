@@ -49,6 +49,7 @@
             this.timerUpdateRemoteGrid = new System.Windows.Forms.Timer(this.components);
             this.labelLocalIpAddress = new System.Windows.Forms.Label();
             this.label4 = new System.Windows.Forms.Label();
+            this.buttonRefreshRemoteComputers = new System.Windows.Forms.Button();
             this.gridRemote = new Gosub.Viewtop.GridWithoutAutoSelect();
             this.columnName = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnIp = new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -110,7 +111,7 @@
             this.groupBox1.Controls.Add(this.label1);
             this.groupBox1.Controls.Add(this.comboJitter);
             this.groupBox1.Controls.Add(this.comboLatency);
-            this.groupBox1.Location = new System.Drawing.Point(12, 220);
+            this.groupBox1.Location = new System.Drawing.Point(13, 220);
             this.groupBox1.Name = "groupBox1";
             this.groupBox1.Size = new System.Drawing.Size(156, 74);
             this.groupBox1.TabIndex = 6;
@@ -172,7 +173,7 @@
             this.groupBox2.Controls.Add(this.buttonNewUser);
             this.groupBox2.Controls.Add(this.listUsers);
             this.groupBox2.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.groupBox2.Location = new System.Drawing.Point(12, 46);
+            this.groupBox2.Location = new System.Drawing.Point(13, 46);
             this.groupBox2.Name = "groupBox2";
             this.groupBox2.Size = new System.Drawing.Size(156, 168);
             this.groupBox2.TabIndex = 8;
@@ -218,20 +219,21 @@
             // 
             // textName
             // 
-            this.textName.Location = new System.Drawing.Point(481, 59);
+            this.textName.Location = new System.Drawing.Point(219, 82);
             this.textName.Name = "textName";
             this.textName.Size = new System.Drawing.Size(112, 20);
             this.textName.TabIndex = 9;
             this.textName.TextChanged += new System.EventHandler(this.textName_TextChanged);
+            this.textName.Leave += new System.EventHandler(this.textName_Leave);
             // 
             // label3
             // 
             this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(412, 62);
+            this.label3.Location = new System.Drawing.Point(175, 85);
             this.label3.Name = "label3";
-            this.label3.Size = new System.Drawing.Size(63, 13);
+            this.label3.Size = new System.Drawing.Size(38, 13);
             this.label3.TabIndex = 10;
-            this.label3.Text = "Nick Name:";
+            this.label3.Text = "Name:";
             // 
             // timerUpdateRemoteGrid
             // 
@@ -253,11 +255,21 @@
             // 
             this.label4.AutoSize = true;
             this.label4.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.label4.Location = new System.Drawing.Point(174, 99);
+            this.label4.Location = new System.Drawing.Point(174, 105);
             this.label4.Name = "label4";
             this.label4.Size = new System.Drawing.Size(152, 20);
             this.label4.TabIndex = 13;
             this.label4.Text = "Remote Computers:";
+            // 
+            // buttonRefreshRemoteComputers
+            // 
+            this.buttonRefreshRemoteComputers.Location = new System.Drawing.Point(518, 99);
+            this.buttonRefreshRemoteComputers.Name = "buttonRefreshRemoteComputers";
+            this.buttonRefreshRemoteComputers.Size = new System.Drawing.Size(75, 23);
+            this.buttonRefreshRemoteComputers.TabIndex = 15;
+            this.buttonRefreshRemoteComputers.Text = "Refresh";
+            this.buttonRefreshRemoteComputers.UseVisualStyleBackColor = true;
+            this.buttonRefreshRemoteComputers.Click += new System.EventHandler(this.buttonRefreshRemoteComputers_Click);
             // 
             // gridRemote
             // 
@@ -272,12 +284,12 @@
             this.columnStatus});
             this.gridRemote.EditMode = System.Windows.Forms.DataGridViewEditMode.EditProgrammatically;
             this.gridRemote.GridColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
-            this.gridRemote.Location = new System.Drawing.Point(178, 122);
+            this.gridRemote.Location = new System.Drawing.Point(178, 128);
             this.gridRemote.Name = "gridRemote";
             this.gridRemote.RowHeadersVisible = false;
             this.gridRemote.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
             this.gridRemote.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
-            this.gridRemote.Size = new System.Drawing.Size(415, 172);
+            this.gridRemote.Size = new System.Drawing.Size(415, 166);
             this.gridRemote.TabIndex = 11;
             this.gridRemote.CellContentClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.gridRemote_CellContentClick);
             // 
@@ -285,7 +297,7 @@
             // 
             this.columnName.HeaderText = "Name";
             this.columnName.Name = "columnName";
-            this.columnName.Width = 180;
+            this.columnName.Width = 200;
             // 
             // columnIp
             // 
@@ -296,12 +308,14 @@
             // 
             this.columnStatus.HeaderText = "Status";
             this.columnStatus.Name = "columnStatus";
+            this.columnStatus.Width = 80;
             // 
             // FormMain
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(607, 309);
+            this.ClientSize = new System.Drawing.Size(607, 306);
+            this.Controls.Add(this.buttonRefreshRemoteComputers);
             this.Controls.Add(this.label4);
             this.Controls.Add(this.labelLocalIpAddress);
             this.Controls.Add(this.gridRemote);
@@ -347,12 +361,13 @@
         private System.Windows.Forms.TextBox textName;
         private System.Windows.Forms.Label label3;
         private GridWithoutAutoSelect gridRemote;
-        private System.Windows.Forms.DataGridViewTextBoxColumn columnName;
-        private System.Windows.Forms.DataGridViewTextBoxColumn columnIp;
-        private System.Windows.Forms.DataGridViewTextBoxColumn columnStatus;
         private System.Windows.Forms.Timer timerUpdateRemoteGrid;
         private System.Windows.Forms.Label labelLocalIpAddress;
         private System.Windows.Forms.Label label4;
+        private System.Windows.Forms.Button buttonRefreshRemoteComputers;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnName;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnIp;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnStatus;
     }
 }
 

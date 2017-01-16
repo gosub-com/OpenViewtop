@@ -18,11 +18,13 @@ namespace Gosub.Viewtop
     class Beacon
     {
         const int BROADCAST_PORT = 24706;
-        const int BROADCAST_TIME_MS = 1750;
+        const int BROADCAST_TIME_MS = 1400;
+        const int BROADCAST_DETECT_MS = 1600;
+        public delegate void PeerChangedDelegate(Peer peer);
 
         byte[] mHeader;
         string mHeaderStr;
-        string mGuid = Guid.NewGuid().ToString();
+        string mSourceId = Guid.NewGuid().ToString();
         Info mInfo;
         Dictionary<string, Peer> mPeers = new Dictionary<string, Peer>();
 
@@ -35,6 +37,10 @@ namespace Gosub.Viewtop
         JsonSerializer mJsonSerializer = new JsonSerializer();
         MemoryStream mWriteBuffer = new MemoryStream();
         byte[] mReadBuffer = new byte[0];
+
+        public event PeerChangedDelegate PeerAdded;
+        public event PeerChangedDelegate PeerRemoved;
+        public event PeerChangedDelegate PeerConnectionEstablishedChanged;
 
         /// <summary>
         /// Start the beacon with the given beacon info.
@@ -78,6 +84,10 @@ namespace Gosub.Viewtop
                 mSocketUnicast.Dispose();
             mSocketBroadcast = null;
             mSocketUnicast = null;
+
+            PeerAdded = null;
+            PeerRemoved = null;
+            PeerConnectionEstablishedChanged = null;
         }
 
         public Info BroadcastInfo
@@ -91,6 +101,8 @@ namespace Gosub.Viewtop
         /// </summary>
         public IPAddress []GetBroadcastAddresses()
         {
+            if (mBroadcastAddresses == null)
+                mBroadcastAddresses = EnumerateNetworks();
             return mBroadcastAddresses.ToArray();
         }
 
@@ -126,6 +138,7 @@ namespace Gosub.Viewtop
         // Purge peers we haven't heard from for a while
         public void PurgePeers(int purgeTimeExitMs, int purgeTimeLostConnectionMs)
         {
+            // Find list of peers to purge
             var now = DateTime.Now;
             var purgeKeys = new List<string>();
             foreach (var peer in mPeers)
@@ -134,13 +147,18 @@ namespace Gosub.Viewtop
                 if (peer.Value.Info.State == State.Exit && timeMs >= purgeTimeExitMs || timeMs >= purgeTimeLostConnectionMs)
                     purgeKeys.Add(peer.Key);
             }
+            // Purge peers
             foreach (var peerKey in purgeKeys)
+            {
+                Peer peer = mPeers[peerKey];
                 mPeers.Remove(peerKey);
+                PeerRemoved?.Invoke(peer);
+            }
         }
 
-
         /// <summary>
-        /// Call on the GUI thread to process beacon packets and broadcast our presense
+        /// Call on the GUI thread about once every 100 milliseconds
+        /// to process beacon packets and broadcast our presense
         /// </summary>
         public void Update()
         {
@@ -149,26 +167,36 @@ namespace Gosub.Viewtop
 
             // Receive and respond to broadcast and unicast packets
             while (mSocketBroadcast.Available > 0)
-                ProcessResponse(mSocketBroadcast);
+                ProcessResponse(mSocketBroadcast, true);
             while (mSocketUnicast.Available > 0)
-                ProcessResponse(mSocketUnicast);
+                ProcessResponse(mSocketUnicast, false);
 
-            // Periodically broadcast our presense        
-            if (DateTime.Now - mBroadcastTime > new TimeSpan(0, 0, 0, 0, BROADCAST_TIME_MS))
+            // Periodically broadcast our presense
+            var now = DateTime.Now;
+            if (now - mBroadcastTime > new TimeSpan(0, 0, 0, 0, BROADCAST_TIME_MS))
             {
+                mBroadcastTime = now;
+
                 // Enumerate networks if they have changed
                 if (mBroadcastAddresses == null)
                     mBroadcastAddresses = EnumerateNetworks();
 
-                // We do not want a response to this broadcast.
-                // This broadcast is only to notify intervening firewalls that we want to receive
-                // receive data on this port.  The firewall may or may not cooperate, especially
-                // since we are expecting the response from a different port (i.e. the unicast port)
-                SendResponse(mSocketBroadcast, new IPEndPoint(IPAddress.Parse("192.168.1.255"), BROADCAST_PORT), State.Nop);
+                // Send broadcasts to all networks
+                foreach (var ip in mBroadcastAddresses)
+                {
+                    // We do not want a response to this broadcast.
+                    // This broadcast is only to notify intervening firewalls that we want to receive
+                    // receive data on this port.  The firewall may or may not cooperate.
+                    SendResponse(mSocketBroadcast, new IPEndPoint(ip, BROADCAST_PORT), State.Nop);
 
-                // We want a response to this brodacast
-                SendResponse(mSocketUnicast, new IPEndPoint(IPAddress.Parse("192.168.1.255"), BROADCAST_PORT), State.Broadcast);
-                mBroadcastTime = DateTime.Now;
+                    // We want a response to this brodacast
+                    SendResponse(mSocketUnicast, new IPEndPoint(ip, BROADCAST_PORT), State.Broadcast);
+                }
+
+                // Ping any peers that are not broadcasting
+                foreach (var peer in mPeers)
+                    if (now - peer.Value.TimeReceived > new TimeSpan(0, 0, 0, 0, BROADCAST_DETECT_MS))
+                        SendResponse(mSocketUnicast, peer.Value.EndPoint, State.Ping);
             }
         }
 
@@ -185,7 +213,7 @@ namespace Gosub.Viewtop
         List<IPAddress> EnumerateNetworks()
         {
             // Find network broadcast addresses without duplicates
-            Dictionary<long, bool> uniqueAddresses = new Dictionary<long, bool>();
+            var uniqueAddresses = new Dictionary<string, IPAddress>();
             foreach (var nif in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (nif.IsReceiveOnly || nif.OperationalStatus != OperationalStatus.Up)
@@ -194,19 +222,36 @@ namespace Gosub.Viewtop
                 {
                     if (unicast.Address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(unicast.Address))
                         continue;
-                    long mask = unicast.IPv4Mask.Address;
-                    long address = ((unicast.Address.Address & mask) | ~mask) & 0xFFFFFFFFL;
-                    uniqueAddresses[address] = true;
+
+                    // Create broadcast address
+                    var addressBytes = unicast.Address.GetAddressBytes();
+                    byte []maskBytes = null;
+                    try
+                    {
+                        maskBytes = unicast.IPv4Mask.GetAddressBytes();
+                    }
+                    catch
+                    {
+                        // Mono doesn't support IPv4Mask, so let's use 255.255.255.0, and hope for the best
+                        maskBytes = new byte[addressBytes.Length];
+                        for (int i = 0; i < addressBytes.Length - 1; i++)
+                            maskBytes[i] = 255;
+                    }                   
+                    // Create broadcast address
+                    for (int i = 0; i < maskBytes.Length; i++)
+                        addressBytes[i] = (byte)(addressBytes[i] & maskBytes[i] | ~maskBytes[i]);
+                    var broadcastIp = new IPAddress(addressBytes);
+                    uniqueAddresses[broadcastIp.ToString()] = broadcastIp;
                 }
             }
             // Create list of addresses
             var addresses = new List<IPAddress>();
             foreach (var address in uniqueAddresses)
-                addresses.Add(new IPAddress(address.Key));
+                addresses.Add(address.Value);
             return addresses;
         }
 
-        void ProcessResponse(Socket socket)
+        void ProcessResponse(Socket socket, bool broadcastSocket)
         {
             if (mReadBuffer.Length < socket.Available)
                 mReadBuffer = new byte[(int)(1.2f*socket.Available)];
@@ -249,43 +294,62 @@ namespace Gosub.Viewtop
                 return;
             }
 
+            // Packet must contain a source ID to be valid
+            if (info.SourceId == "")
+                return;
+
             // Keep different entries for the same application even if the
             // packets come from different IP addresses, which is possible
             // when connected to multiple networks.
             // TBD: Maybe it would be better to have one entry per application
             //      with a list of IP addresses instead.
-            string key = info.Guid + ", " + ep.Address.ToString();
+            string key = info.SourceId + ", " + ep.Address.ToString();
             Peer peer;
             if (!mPeers.TryGetValue(key, out peer))
             {
-                peer = new Peer();
+                // Collect first contact info, even if NOP
+                peer = new Peer(key);
                 mPeers[key] = peer;
-
-                // Collect info even if NOP
                 peer.Info = info; 
                 peer.EndPoint = ep;
+                peer.ThisBeacon = info.SourceId == mSourceId;
+                peer.TimeReceived = DateTime.Now;
+                PeerAdded?.Invoke(peer);
             }
 
-            // Do almost nothing with this broadcast if it's a nop
-            peer.ThisBeacon = info.Guid == mGuid;
+            // Save peer info (not as much if it's a NOP)
+            peer.ThisBeacon = info.SourceId == mSourceId;
             peer.TimeReceived = DateTime.Now;
             if (info.State == State.Nop)
                 return;
-
             peer.Info = info;
             peer.EndPoint = ep;
 
-            // Send responses to establish a connection
+            // Send response to establish a connection
             if (info.State == State.Broadcast && !peer.ConnectionEstablished)
                 SendResponse(mSocketUnicast, ep, State.Ping);
+
+            // Do not allow P2P on the broadcast port
+            if (broadcastSocket)
+                return;
+
+            // Continue conversation on unicast socket
             if (info.State == State.Ping)
                 SendResponse(mSocketUnicast, ep, State.Pong);
+
             if (info.State == State.Pong)
                 SendResponse(mSocketUnicast, ep, State.Gong);
-            if (info.State == State.Pong || info.State == State.Gong)
+
+            if ((info.State == State.Pong || info.State == State.Gong) && !peer.ConnectionEstablished)
+            {
                 peer.ConnectionEstablished = true;
-            if (info.State == State.Exit)
+                PeerConnectionEstablishedChanged?.Invoke(peer);
+            }
+            if (info.State == State.Exit && peer.ConnectionEstablished)
+            {
                 peer.ConnectionEstablished = false;
+                PeerConnectionEstablishedChanged?.Invoke(peer);
+            }
         }
 
         void SendResponse(Socket socket, IPEndPoint ep, State state)
@@ -293,9 +357,9 @@ namespace Gosub.Viewtop
             try
             {
                 // Set beacon info
-                mInfo.Guid = mGuid;
                 mInfo.State = state;
-                mInfo.MyPort = ((IPEndPoint)socket.LocalEndPoint).Port;
+                mInfo.SourceId = mSourceId;
+                mInfo.SourcePort = ((IPEndPoint)socket.LocalEndPoint).Port;
                 mInfo.YourPort = ep.Port;
 
                 // Serialize to JSON
@@ -330,10 +394,10 @@ namespace Gosub.Viewtop
         /// </summary>
         public class Info
         {
-            // Type and Guid are always overwritten by the beacon
+            // These are overwritten by the beacon
             public State State;
-            public string Guid = "";
-            public int MyPort;
+            public string SourceId = "";
+            public int SourcePort;
             public int YourPort;
         }
 
@@ -342,11 +406,19 @@ namespace Gosub.Viewtop
         /// </summary>
         public class Peer
         {
+            string mKey;
+
+            public string Key { get { return mKey; } }
             public Info Info;
             public IPEndPoint EndPoint;
             public DateTime TimeReceived;
             public bool ThisBeacon; // Set to true if this is a packet from this beacon
             public bool ConnectionEstablished;  // P2P bidirectional communications established
+
+            public Peer(string key)
+            {
+                mKey = key;
+            }
 
             /// <summary>
             /// If the port number we receive doesn't match the port number reported by the
@@ -354,7 +426,7 @@ namespace Gosub.Viewtop
             /// </summary>
             public bool UsingNat
             {
-                get { return EndPoint.Port != Info.MyPort; }
+                get { return EndPoint.Port != Info.SourcePort; }
             }
 
             public Peer Clone()

@@ -184,11 +184,8 @@ function Viewtop(drawString, canvas)
     function preventDefault(e)
     {
         e.returnValue = false;
-        if (e.preventDefault)
-        {
-            e.preventDefault();
-            return;
-        }
+        e.preventDefault();
+        e.stopPropagation();
     }
 
     function StartSession()

@@ -73,6 +73,7 @@
     <Compile Include="GridWithoutAutoSelect.Designer.cs">
       <DependentUpon>GridWithoutAutoSelect.cs</DependentUpon>
     </Compile>
+    <Compile Include="Settings.cs" />
     <Compile Include="Viewtop\Beacon.cs" />
     <Compile Include="Viewtop\BlockWriter.cs" />
     <Compile Include="Viewtop\Clip.cs" />

@@ -14,25 +14,26 @@ namespace Gosub.Viewtop
     class UserFile
     {
         const string USER_FILE_NAME = "Users.json";
-        static readonly string sUserFilePath = Path.Combine(Application.CommonAppDataPath, USER_FILE_NAME);
         static object sLock = new object();
 
         public List<User> Users { get; set; } = new List<User>();
 
         public static UserFile Load()
         {
+            var fileName = Path.Combine(Application.CommonAppDataPath, USER_FILE_NAME);
             lock (sLock)
             {
-                if (!File.Exists(sUserFilePath))
+                if (!File.Exists(fileName))
                     return new UserFile();
-                return JsonConvert.DeserializeObject<UserFile>(File.ReadAllText(sUserFilePath));
+                return JsonConvert.DeserializeObject<UserFile>(File.ReadAllText(fileName));
             }
         }
 
         public static void Save(UserFile users)
         {
+            var fileName = Path.Combine(Application.CommonAppDataPath, USER_FILE_NAME);
             lock (sLock)
-                File.WriteAllText(sUserFilePath, JsonConvert.SerializeObject(users));
+                File.WriteAllText(fileName, JsonConvert.SerializeObject(users));
         }
 
         public static bool ValidUserName(string userName)

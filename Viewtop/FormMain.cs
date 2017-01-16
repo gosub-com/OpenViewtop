@@ -20,20 +20,23 @@ namespace Gosub.Viewtop
         const string HTTPS_PORT = "24707";
         const string HTTP_PORT = "24708";
         const string BROADCAST_HEADER = "OVT:";
+
         const int PURGE_PEER_AFTER_EXIT_MS = 3000;
         const int PURGE_PEER_LOST_CONNECTION_MS = 8000;
-        const int PROBLEM_PEER_TIME_MS = 4000;
+        const int PROBLEM_PEER_TIME_MS = 3000;
 
         FileServer mFileServer;
         ViewtopServer mOvtServer;
         Beacon mBeacon = new Beacon();
         PeerInfo mPeerInfo = new PeerInfo();
+        Settings mSettings = new Settings();
 
+        List<string> mPeers = new List<string>();
 
         class PeerInfo : Beacon.Info
         {
             public string ComputerName = "";
-            public string NickName = "";
+            public string Name = "";
             public string HttpsPort = "";
             public string HttpPort = "";
         }
@@ -48,7 +51,6 @@ namespace Gosub.Viewtop
             Text = App.Name + ", version " + App.Version;
             MouseAndKeyboard.MainForm = this;
             Clip.MainForm = this;
-            StopWebServer();
             comboLatency.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
             comboLatency.SelectedIndex = 0;
             comboJitter.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
@@ -57,8 +59,50 @@ namespace Gosub.Viewtop
 
         private void FormMain_Shown(object sender, EventArgs e)
         {
-            Show();
-            Refresh();
+            try
+            {
+                Show();
+                Refresh();
+
+                CheckAppDataDirectory();
+                mSettings = Settings.Load();
+                textName.Text = mSettings.Name;
+                LoadUserFileFirstTime();
+                StartWebServer();
+                StartBeacon();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Error loading application: " + ex.Message, App.Name);
+                Application.Exit();
+            }
+        }
+
+        private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            mBeacon.Stop();
+            Settings.Save(mSettings);
+        }
+
+        private void CheckAppDataDirectory()
+        {
+            try
+            {
+                // On Mono, the user will have to create this directory
+                var appDataDir = Application.CommonAppDataPath;
+                if (!Directory.Exists(appDataDir))
+                    Directory.CreateDirectory(appDataDir);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Please create this directrory with appropriate pemissions.  " 
+                    + "Error: " + ex.Message, App.Name);
+                throw;
+            }
+        }
+
+        private void LoadUserFileFirstTime()
+        {
             var userFile = LoadUserFile();
             LoadUserNamesListBox(userFile);
 
@@ -71,30 +115,31 @@ namespace Gosub.Viewtop
                     MessageBox.Show(this, "No one will be able to log on to the server until you create a username and password!", App.Name);
                 LoadUserNamesListBox(userFile);
             }
-            StartWebServer();
+        }
 
+        private void StartBeacon()
+        {
             try
             {
-                mPeerInfo.ComputerName = Dns.GetHostName();
-                mPeerInfo.NickName = textName.Text;
+                try { mPeerInfo.ComputerName = Dns.GetHostName(); }
+                catch { MessageBox.Show(this, "Error getting Dns host name.", App.Name); }
+                mPeerInfo.Name = textName.Text;
                 mPeerInfo.HttpsPort = HTTPS_PORT;
                 mPeerInfo.HttpPort = HTTP_PORT;
                 mBeacon.Start(BROADCAST_HEADER, mPeerInfo);
+                mBeacon.PeerAdded += mBeacon_PeerAdded;
+                mBeacon.PeerRemoved += mBeacon_PeerRemoved;
+                mBeacon.PeerConnectionEstablishedChanged += mBeacon_PeerConnectionEstablishedChanged;
                 timerBeacon.Enabled = true;
             }
             catch (Exception ex)
-            {                
+            {
                 MessageBox.Show(this, "Error starting beacon: " + ex.Message, App.Name);
             }
             if (timerBeacon.Enabled && mBeacon.GetBroadcastAddresses().Length == 0)
             {
                 MessageBox.Show(this, "Warning: No networks were detected.");
             }
-        }
-
-        private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
-        {
-            mBeacon.Stop();
         }
 
         UserFile LoadUserFile()
@@ -182,7 +227,6 @@ namespace Gosub.Viewtop
 
         void StartWebServer()
         {
-
             if (mFileServer != null)
                 mFileServer.Stop();
 
@@ -397,25 +441,76 @@ namespace Gosub.Viewtop
 
         private void textName_TextChanged(object sender, EventArgs e)
         {
-            mPeerInfo.NickName = textName.Text;
+            mPeerInfo.Name = textName.Text;
+            mSettings.Name = textName.Text;
+        }
+
+        private void textName_Leave(object sender, EventArgs e)
+        {
+            Settings.Save(mSettings);
+        }
+
+        // Called when a new peer is detected
+        void mBeacon_PeerAdded(Beacon.Peer peer)
+        {
+            // Ignore this compurer
+            if (peer.ThisBeacon)
+                return;
+
+            // Add row to grid
+            mPeers.Add(peer.Key);
+            gridRemote.Rows.Add("", "", "");
+            RefreshPeerGrid();
+        }
+        
+        // Called when an old peer is dropped
+        void mBeacon_PeerRemoved(Beacon.Peer removedPeer)
+        {
+            // Remove row from grid, adjust index of peers to be in proper spot
+            int index = mPeers.FindIndex((m) => (m == removedPeer.Key));
+            if (index < 0)
+                return;
+            mPeers.RemoveAt(index);
+            gridRemote.Rows.RemoveAt(index);
+        }
+
+        private void mBeacon_PeerConnectionEstablishedChanged(Beacon.Peer peer)
+        {
+            RefreshPeerGrid();
         }
 
         private void timerUpdateRemoteGrid_Tick(object sender, EventArgs e)
+        {
+            RefreshPeerGrid();
+
+            // Display local IP address
+            string ipAddresses = "";
+            foreach (var ip in mBeacon.GetLocalAddresses())
+            {
+                if (ipAddresses != "")
+                    ipAddresses += ", ";
+                ipAddresses += ip.ToString();
+            }
+            labelLocalIpAddress.Text = "Local IP addresses: " + (ipAddresses == "" ? "(unknown)" : ipAddresses);
+        }
+
+        private void RefreshPeerGrid()
         {
             // Update list of remote computers
             var now = DateTime.Now;
             mBeacon.PurgePeers(PURGE_PEER_AFTER_EXIT_MS, PURGE_PEER_LOST_CONNECTION_MS);
             var peers = mBeacon.GetPeers();
-            gridRemote.Rows.Clear();
+
             foreach (var peer in peers)
             {
-                // Ignore this compurer
-                if (peer.ThisBeacon)
+                // Ignore any peers not in the grid
+                int rowIndex = mPeers.FindIndex((m) => (m == peer.Key));
+                if (rowIndex < 0)
                     continue;
 
+                // Get peer status and color
                 var info = (PeerInfo)peer.Info;
                 var lastTimeReceived = (now - peer.TimeReceived).TotalMilliseconds;
-
                 string status;
                 Color color;
                 if (info.State == Beacon.State.Exit)
@@ -445,28 +540,18 @@ namespace Gosub.Viewtop
                 }
 
                 // Add grid row
-                string linkComputerName = "https://" + info.ComputerName + ":" + info.HttpsPort;
+                // NOTE: Using the computer name doesn't always work because our DNS server may
+                //       not have resolved it yet.  So, for now, use the IP address instead.
+                string linkComputerName = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
                 string linkIpAddress = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
-                var name = info.NickName.Trim() == "" ? "" : " (" + info.NickName + ")";
-                gridRemote.Rows.Add(
-                    new GridLink(info.ComputerName + name, linkComputerName),
-                    new GridLink(peer.EndPoint.Address.ToString(), linkIpAddress),
-                    new GridLink(status, linkIpAddress));
-                int row = gridRemote.Rows.Count - 1;
-                gridRemote[0, row].Style.ForeColor = color;
-                gridRemote[1, row].Style.ForeColor = color;
-                gridRemote[2, row].Style.ForeColor = color;
+                var name = info.Name.Trim() == "" ? "" : " (" + info.Name + ")";
+                gridRemote[0, rowIndex].Value = new GridLink(info.ComputerName + name, linkComputerName);
+                gridRemote[1, rowIndex].Value = new GridLink(peer.EndPoint.Address.ToString(), linkIpAddress);
+                gridRemote[2, rowIndex].Value = new GridLink(status, linkIpAddress);
+                gridRemote[0, rowIndex].Style.ForeColor = color;
+                gridRemote[1, rowIndex].Style.ForeColor = color;
+                gridRemote[2, rowIndex].Style.ForeColor = color;
             }
-
-            // Display local IP address
-            string ipAddresses = "";
-            foreach (var ip in mBeacon.GetLocalAddresses())
-            {
-                if (ipAddresses != "")
-                    ipAddresses += ", ";
-                ipAddresses += ip.ToString();
-            }
-            labelLocalIpAddress.Text = "Local IP address: " + (ipAddresses == "" ? "(unknown)" : ipAddresses);
         }
 
         private void gridRemote_CellContentClick(object sender, DataGridViewCellEventArgs e)
@@ -474,6 +559,15 @@ namespace Gosub.Viewtop
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
             Process.Start(((GridLink)gridRemote[e.ColumnIndex, e.RowIndex].Value).Link);
+        }
+
+        private void buttonRefreshRemoteComputers_Click(object sender, EventArgs e)
+        {
+            mBeacon.Stop();
+            mBeacon = new Beacon();
+            mPeers.Clear();
+            gridRemote.Rows.Clear();
+            StartBeacon();
         }
 
         /// <summary>
@@ -493,5 +587,6 @@ namespace Gosub.Viewtop
                 return Text;
             }
         }
+
     }
 }
