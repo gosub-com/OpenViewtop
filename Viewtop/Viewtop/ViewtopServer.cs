@@ -6,6 +6,7 @@ using System.Net;
 using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics;
+using Gosub.Http;
 
 namespace Gosub.Viewtop
 {
@@ -22,41 +23,14 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpListenerContext context)
+        public void ProcessWebRemoteViewerRequest(HttpStream stream)
         {
-            try
-            {
-                TryProcessWebRemoteViewerRequest(context);
-            }
-            catch (Exception ex)
-            {
-                SendJsonError(context.Response, "Error processing viewtop request: " + ex.Message);
-                Debug.WriteLine("Error processing viewtop request: " + ex.Message);
-            }
-        }
+            var request = stream.Request;
+            var response = stream.Response;
 
-        /// <summary>
-        /// Error messages from the viewtop server are in JSON with code 200
-        /// </summary>
-        public static void SendJsonError(HttpListenerResponse response, string message)
-        {
-            FileServer.SendResponse(response, @"{""FAIL"":""" +
-                message.Replace("\"", "\\\"").Replace("\\", "\\\\")
-                + @"""}", 400);
-        }
-
-        /// <summary>
-        /// Handle a web remote view request (each request is in its own thread)
-        /// </summary>
-        void TryProcessWebRemoteViewerRequest(HttpListenerContext context)
-        {
-            var request = context.Request;
-            var response = context.Response;
-
-            string query = request.QueryString["query"];
-            if (query == null)
+            if (!request.Query.TryGetValue("query", out string query))
             {
-                SendJsonError(response, "Query must include 'query' parameter");
+                SendJsonError(stream, "Query must include 'query' parameter");
                 return;
             }
 
@@ -73,15 +47,13 @@ namespace Gosub.Viewtop
                     newSession = new ViewtopSession(sessionId);
                     mSessions[sessionId] = newSession;
                 }
-                newSession.ProcessWebRemoteViewerRequest(context);
+                newSession.ProcessWebRemoteViewerRequest(stream);
                 return;
             }
 
-            string sidStr = request.QueryString["sid"];
-            long sid;
-            if (sidStr == null || !long.TryParse(sidStr, out sid))
+            if (!long.TryParse(request.Query.Get("sid"), out long sid))
             {
-                SendJsonError(response, "Query must include 'sid'");
+                SendJsonError(stream, "Query must include 'sid'");
                 return;
             }
             ViewtopSession session;
@@ -89,11 +61,11 @@ namespace Gosub.Viewtop
             {
                 if (!mSessions.TryGetValue(sid, out session))
                 {
-                    SendJsonError(response, "Unknown 'sid'");
+                    SendJsonError(stream, "Unknown 'sid'");
                     return;
                 }
             }
-            session.ProcessWebRemoteViewerRequest(context);
+            session.ProcessWebRemoteViewerRequest(stream);
         }
 
         private void PurgeInactiveSessions()
@@ -109,5 +81,16 @@ namespace Gosub.Viewtop
                     mSessions.Remove(sessionId);
             }
         }
+
+        /// <summary>
+        /// Error messages from the viewtop server are in JSON with code 200
+        /// </summary>
+        public static void SendJsonError(HttpStream stream, string message)
+        {
+            stream.SendResponse(@"{""FAIL"":""" +
+                message.Replace("\"", "\\\"").Replace("\\", "\\\\")
+                + @"""}", 400);
+        }
+
     }
 }

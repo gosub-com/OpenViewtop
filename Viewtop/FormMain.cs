@@ -12,6 +12,7 @@ using System.Security.Principal;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using Gosub.Http;
 
 namespace Gosub.Viewtop
 {
@@ -20,6 +21,7 @@ namespace Gosub.Viewtop
         const string HTTPS_PORT = "24707";
         const string HTTP_PORT = "24708";
         const string BROADCAST_HEADER = "OVT:";
+        const int CUSTOM_HTTP_PORT = 8151;
 
         const int PURGE_PEER_AFTER_EXIT_MS = 3000;
         const int PURGE_PEER_LOST_CONNECTION_MS = 8000;
@@ -243,9 +245,55 @@ namespace Gosub.Viewtop
             var httpPrefixes = new List<string>();
             httpPrefixes.Add("https://*:" + HTTPS_PORT + "/");
             httpPrefixes.Add("http://*:" + HTTP_PORT + "/" );
-
             SetupSecurePort(HTTPS_PORT);
 
+            // *** New custom HTTP web server ***
+            var listener = new TcpListener(IPAddress.Any, CUSTOM_HTTP_PORT);
+            HttpServer server = new HttpServer();
+            server.Start(listener, (stream) => 
+            {
+                // Convert path to Windows, strip leading "\", and choose "index" if no name is given
+                var request = stream.Request;
+                string path = request.Target.Replace('/', Path.DirectorySeparatorChar);
+                while (path.Length != 0 && path[0] == Path.DirectorySeparatorChar)
+                    path = path.Substring(1);
+                if (path.Length == 0)
+                    path = "index.html";
+
+                string publicSubdirectory = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www");
+                string hiddenFileName = Path.DirectorySeparatorChar + ".";
+
+                // Never serve files outside of the public subdirectory, or that begin with a "."
+                path = Path.Combine(publicSubdirectory, path);
+                if (path.Contains("..") || path.Contains(hiddenFileName) )
+                {
+                    stream.FailRequest(400, "Invalid Request: File name is invalid");
+                    return;
+                }
+
+                if (Path.GetExtension(path).ToLower() == ".ovt")
+                {
+                    if (mOvtServer == null)
+                        mOvtServer = new ViewtopServer();
+                    mOvtServer.ProcessWebRemoteViewerRequest(stream);
+                    return;
+                }
+
+                // Static files can only be a GET request
+                if (request.HttpMethod != "GET")
+                    throw new Exception("Invalid HTTP request: Only GET method is allowed for serving ");
+
+                // If this is a file in our local subdirectory, send it to the client
+                if (File.Exists(path))
+                {
+                    // Send local file back to client
+                    stream.SendFile(path);
+                    return;
+                }
+                stream.FailRequest(404, "File not found");
+            });
+
+            /*
             try
             {
                 // Setup server
@@ -262,6 +310,7 @@ namespace Gosub.Viewtop
                 labelSecureLink.Text = "Error starting server";
                 return;
             }
+            */
             string link = "https://" + machineName + ":" + HTTPS_PORT;
             string text = "Secure: ";
             labelSecureLink.Text = text + link;

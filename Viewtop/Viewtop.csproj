@@ -73,6 +73,10 @@
     <Compile Include="GridWithoutAutoSelect.Designer.cs">
       <DependentUpon>GridWithoutAutoSelect.cs</DependentUpon>
     </Compile>
+    <Compile Include="Http\HttpStream.cs" />
+    <Compile Include="Http\HttpRequest.cs" />
+    <Compile Include="Http\HttpResponse.cs" />
+    <Compile Include="Http\HttpServer.cs" />
     <Compile Include="Settings.cs" />
     <Compile Include="Viewtop\Beacon.cs" />
     <Compile Include="Viewtop\BlockWriter.cs" />

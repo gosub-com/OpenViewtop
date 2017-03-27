@@ -10,6 +10,7 @@ using System.Collections.Specialized;
 using System.Text;
 using System.IO;
 using System.IO.Compression;
+using Gosub.Http;
 
 namespace Gosub.Viewtop
 {
@@ -102,37 +103,33 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpListenerContext context)
+        public void ProcessWebRemoteViewerRequest(HttpStream stream)
         {
             LastRequestTime = DateTime.Now;
-            var request = context.Request;
-            var response = context.Response;
-            string query = request.QueryString["query"];
+            var request = stream.Request;
+            var response = stream.Response;
+            var queryString = request.Query;
 
+            var query =  queryString.Get("query");
             if (query == "startsession")
             {
                 // Send session id, password salt, and challenge
                 mChallenge = Util.GenerateSalt();
-                var user = UserFile.Load().Find(request.QueryString["username"]);
+                var user = UserFile.Load().Find(queryString.Get("username"));
                 string salt = user != null ? user.Salt : Util.GenerateSalt();
-                FileServer.SendResponse(response,
-                    @"{""sid"": " + SessionId
-                    + @",""challenge"":""" + mChallenge
-                    + @""",""salt"":""" + salt + @"""}", 200);
+                stream.SendResponse(@"{""sid"": " + SessionId
+                                    + @",""challenge"":""" + mChallenge
+                                    + @""",""salt"":""" + salt + @"""}");
                 return;
             }
 
             if (query == "login")
             {
                 // Authenticate user
-                string username = request.QueryString["username"];
-                var passwordHash = request.QueryString["hash"];
-                if (username != null && passwordHash != null)
-                {
-                    var user = UserFile.Load().Find(username);
-                    if (user != null)
-                        mAuthenticated = user.VerifyPassword(mChallenge, passwordHash);
-                }
+                var user = UserFile.Load().Find(queryString.Get("username"));
+                if (user != null)
+                    mAuthenticated = user.VerifyPassword(mChallenge, queryString.Get("hash"));
+
                 // Send response
                 var loginInfo = new LoginInfo();
                 loginInfo.LoggedIn = mAuthenticated;
@@ -141,14 +138,14 @@ namespace Gosub.Viewtop
                     try { loginInfo.ComputerName = Dns.GetHostName(); }
                     catch { }
                 }
-                FileServer.SendResponse(response, JsonConvert.SerializeObject(loginInfo), 200);
+                stream.SendResponse(JsonConvert.SerializeObject(loginInfo));
                 return;
             }
 
             // --- Everything below this requires authentication ---
             if (!mAuthenticated)
             {
-                ViewtopServer.SendJsonError(response, "User must be logged in");
+                ViewtopServer.SendJsonError(stream, "User must be logged in");
                 return;
             }
 
@@ -164,37 +161,34 @@ namespace Gosub.Viewtop
             {
                 if (!mClip.EverChanged)
                 {
-                    ViewtopServer.SendJsonError(response, "Not allowed to access clipboard until data is copied");
+                    ViewtopServer.SendJsonError(stream, "Not allowed to access clipboard until data is copied");
                     return;
                 }
-                SendClipData(response);
+                SendClipData(stream);
                 return;
             }
 
             // --- Everything below this requires a sequence number
-            string sequenceStr = request.QueryString["seq"];
-            long sequence;
-            if (sequenceStr == null || !long.TryParse(sequenceStr, out sequence))
+            if (!long.TryParse(queryString.Get("seq"), out long sequence))
             {
-                ViewtopServer.SendJsonError(response, "Query must have a sequence number called 'seq', and must it must be numeric");
+                ViewtopServer.SendJsonError(stream, "Query must have a sequence number called 'seq', and must it must be numeric");
                 return;
             }
 
             if (query == "draw")
             {
                 UpdateMousePositionFromDrawQuery(request);
-                FrameInfo frame;
-                if (WaitForImageOrTimeout(sequence, out frame, request.QueryString))
-                    FileServer.SendResponse(response, JsonConvert.SerializeObject(frame), 200);
+                if (WaitForImageOrTimeout(sequence, out FrameInfo frame, stream.Request.Query))
+                    stream.SendResponse(JsonConvert.SerializeObject(frame), 200);
                 else
-                    ViewtopServer.SendJsonError(response, "Error retrieving draw frame " + sequence);
+                    ViewtopServer.SendJsonError(stream, "Error retrieving draw frame " + sequence);
                 return;
             }
 
             if (query == "events")
             {
                 int maxLength = 64000;
-                byte[] buffer = FileServer.GetRequest(request, maxLength);
+                byte[] buffer = stream.ReadContent(maxLength);
                 string json = UTF8Encoding.UTF8.GetString(buffer);
                 var events = JsonConvert.DeserializeObject<RemoteEvents>(json);
 
@@ -222,32 +216,28 @@ namespace Gosub.Viewtop
                             break;
                     }
                 }
-                FileServer.SendResponse(response, "", 200);
                 return;
             }
-            ViewtopServer.SendJsonError(response, "ERROR: Invalid query name - " + query);
+            ViewtopServer.SendJsonError(stream, "ERROR: Invalid query name - " + query);
         }
 
-        void UpdateMousePositionFromDrawQuery(HttpListenerRequest request)
+        void UpdateMousePositionFromDrawQuery(Http.HttpRequest request)
         {
-            long time;
-            int x;
-            int y;
-            string ts = request.QueryString["t"];
-            string xs = request.QueryString["x"];
-            string ys = request.QueryString["y"];
-            if (ts == null || !long.TryParse(ts, out time)
-                || xs == null || !int.TryParse(xs, out x)
-                || ys == null || !int.TryParse(ys, out y)
-                || mCollector == null || mCollector.Scale == 0)
-                return;
-            mEvents.SetMousePosition(time, 1/mCollector.Scale, x, y, false);
+            var queryString = request.Query;
+            if (long.TryParse(queryString.Get("t"), out long time)
+                && int.TryParse(queryString.Get("x"), out int x)
+                && int.TryParse(queryString.Get("y"), out int y)
+                && mCollector != null 
+                && mCollector.Scale != 0)
+            {
+                mEvents.SetMousePosition(time, 1 / mCollector.Scale, x, y, false);
+            }
         }
 
         /// <summary>
         /// Retrieve the requested frame
         /// </summary>
-        bool WaitForImageOrTimeout(long sequence, out FrameInfo frame, NameValueCollection drawOptions)
+        bool WaitForImageOrTimeout(long sequence, out FrameInfo frame, HttpRequest.QueryDict queryString)
         {
             // If a future frame is receivied, wait for it or timeout.
             DateTime now = DateTime.Now;
@@ -261,7 +251,7 @@ namespace Gosub.Viewtop
                         return true;
                     }
                     // Break to allow the current frame to be processed
-                    if (drawOptions != null && sequence <= mSequence + 1)
+                    if (sequence <= mSequence + 1)
                         break;
                 }
                 // Fail if the frame isn't ready within the long poll timeout
@@ -273,9 +263,6 @@ namespace Gosub.Viewtop
             // Collect a new frame.  Future frames and image frames are queued above
             lock (mLock)
             {
-                // Frames are blocked above until we have the data
-                Debug.Assert(drawOptions != null);
-
                 // Generate an error for very old frames
                 if (sequence <= mSequence)
                 {
@@ -292,7 +279,7 @@ namespace Gosub.Viewtop
 
                 // Generate the frame
                 frame = new FrameInfo();
-                GetFrame(frame, drawOptions);
+                GetFrame(frame, queryString);
                 GetClipInfo(frame);
 
                 // Save the frame in history and delete old frames
@@ -304,7 +291,7 @@ namespace Gosub.Viewtop
             }
         }
 
-        void GetFrame(FrameInfo frame, NameValueCollection drawOptions)
+        void GetFrame(FrameInfo frame, HttpRequest.QueryDict queryString)
         {
             if (mCollector == null)
                 mCollector = new FrameCollector();
@@ -312,17 +299,14 @@ namespace Gosub.Viewtop
                 mAnalyzer = new FrameCompressor();
 
             // Process MaxWidth and MaxHeight
-            int maxWidth = 0;
-            int maxHeight = 0;
-            int.TryParse(drawOptions["MaxWidth"], out maxWidth);
-            int.TryParse(drawOptions["MaxHeight"], out maxHeight);
+            int.TryParse(queryString.Get("maxwidth"), out int maxWidth);
+            int.TryParse(queryString.Get("maxheight"), out int maxHeight);
 
             // Full frame analysis
-            mAnalyzer.FullFrame = drawOptions["fullframe"] != null;
+            mAnalyzer.FullFrame = queryString.Get("fullframe") != "";
 
             // Process compression type
-            string compressionType = drawOptions["compression"];
-            compressionType = compressionType == null ? "" : compressionType.ToLower();
+            string compressionType = queryString.Get("compression").ToLower();
             if (compressionType == "png")
                 mAnalyzer.Compression = FrameCompressor.CompressionType.Png;
             else if (compressionType == "jpg")
@@ -331,8 +315,7 @@ namespace Gosub.Viewtop
                 mAnalyzer.Compression = FrameCompressor.CompressionType.SmartPng;
 
             // Process output type
-            string outputType = drawOptions["output"];
-            outputType = outputType == null ? "" : outputType.ToLower();
+            string outputType = queryString.Get("output").ToLower();
             if (outputType == "fullframejpg")
                 mAnalyzer.Output = FrameCompressor.OutputType.FullFrameJpg;
             else if (outputType == "fullframepng")
@@ -456,28 +439,30 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Send the clipboard files, multiple files get zipped
         /// </summary>
-        void SendClipData(HttpListenerResponse response)
+        void SendClipData(HttpStream stream)
         {
             if (mClip.ContainsText())
             {
-                FileServer.SendResponse(response, mClip.GetText(), 200);
+                stream.SendResponse(mClip.GetText());
                 return;
             }
             string[] files = mClip.GetFiles();
             if (files.Length == 0)
             {
-                FileServer.SendResponse(response, new byte[0], 400);
+                stream.Response.StatusCode = 400;
+                stream.SendResponse(new byte[0]);
                 return;
             }
             if (files.Length == 1 && !File.GetAttributes(files[0]).HasFlag(FileAttributes.Directory))
             {
-                FileServer.SendFile(response, files[0]);
+                stream.SendFile(files[0]);
                 return;
             }
             // Lock here to prevent the browser from being aggressive
             // and trying to download multiple copies at the same time
             lock (mLockZip)
             {
+                // Create a ZIP file
                 var tempFile = Path.GetTempFileName();
                 try
                 {
@@ -485,7 +470,7 @@ namespace Gosub.Viewtop
                     using (var archive = new ZipArchive(tempStream, ZipArchiveMode.Create))
                         foreach (var file in files)
                             WriteZip(archive, file, Path.GetDirectoryName(file));
-                    FileServer.SendFile(response, tempFile);
+                    stream.SendFile(tempFile);
                 }
                 finally
                 {

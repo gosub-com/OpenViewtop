@@ -180,8 +180,15 @@ namespace Gosub.Viewtop
 
             // NOTE: This needs to be fixed
             var buffer = new byte[(int)request.ContentLength64];
-            if (request.InputStream.Read(buffer, 0, buffer.Length) != buffer.Length)
-                throw new Exception("Error: Chunks not allowed yet");
+            try
+            {
+                if (request.InputStream.Read(buffer, 0, buffer.Length) != buffer.Length)
+                    throw new Exception("Error: Chunks not allowed yet");
+            }
+            catch (Exception ex)
+            {
+                throw; // Debug
+            }
 
             return buffer;
         }
