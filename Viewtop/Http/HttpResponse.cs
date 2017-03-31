@@ -17,11 +17,13 @@ namespace Gosub.Http
         int mStatusCode = 200;
         string mStatusMessage = "OK";
         long mContentLength = -1;
+        bool mKeepAlive;
 
         public bool HeaderSent { get => mHeaderSent; set { CheckSent(); mHeaderSent = value; } }
         public int StatusCode { get => mStatusCode; set { CheckSent(); mStatusCode = value; } }
         public string StatusMessage { get => mStatusMessage; set { CheckSent(); mStatusMessage = value; } }
         public long ContentLength { get => mContentLength; set { CheckSent(); mContentLength = value; } }
+        public bool KeepAlive { get => mKeepAlive; set { CheckSent(); mKeepAlive = value; } }
 
         void CheckSent()
         {

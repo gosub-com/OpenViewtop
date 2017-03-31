@@ -7,10 +7,7 @@ using System.IO;
 using System.Collections.Generic;
 using System.Security.Cryptography.X509Certificates;
 using System.Diagnostics;
-using System.Reflection;
-using System.Security.Principal;
 using System.Net;
-using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Gosub.Http;
 
@@ -18,16 +15,17 @@ namespace Gosub.Viewtop
 {
     public partial class FormMain : Form
     {
-        const string HTTPS_PORT = "24707";
-        const string HTTP_PORT = "24708";
+        const int HTTP_PORT = 8151;
+        const int HTTPS_PORT = 8152;
         const string BROADCAST_HEADER = "OVT:";
-        const int CUSTOM_HTTP_PORT = 8151;
 
         const int PURGE_PEER_AFTER_EXIT_MS = 3000;
         const int PURGE_PEER_LOST_CONNECTION_MS = 8000;
         const int PROBLEM_PEER_TIME_MS = 3000;
 
-        FileServer mFileServer;
+        HttpServer mHttpServer;
+        HttpServer mHttpsServer;
+
         ViewtopServer mOvtServer;
         Beacon mBeacon = new Beacon();
         PeerInfo mPeerInfo = new PeerInfo();
@@ -82,8 +80,10 @@ namespace Gosub.Viewtop
 
         private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
         {
-            mBeacon.Stop();
-            Settings.Save(mSettings);
+            try { mHttpServer.Stop(); } catch { }
+            try { mHttpsServer.Stop(); } catch { }
+            try { mBeacon.Stop(); } catch {  }
+            try { Settings.Save(mSettings); } catch { }
         }
 
         private void CheckAppDataDirectory()
@@ -126,8 +126,8 @@ namespace Gosub.Viewtop
                 try { mPeerInfo.ComputerName = Dns.GetHostName(); }
                 catch { MessageBox.Show(this, "Error getting Dns host name.", App.Name); }
                 mPeerInfo.Name = textName.Text;
-                mPeerInfo.HttpsPort = HTTPS_PORT;
-                mPeerInfo.HttpPort = HTTP_PORT;
+                mPeerInfo.HttpsPort = HTTPS_PORT.ToString();
+                mPeerInfo.HttpPort = HTTP_PORT.ToString();
                 mBeacon.Start(BROADCAST_HEADER, mPeerInfo);
                 mBeacon.PeerAdded += mBeacon_PeerAdded;
                 mBeacon.PeerRemoved += mBeacon_PeerRemoved;
@@ -229,8 +229,10 @@ namespace Gosub.Viewtop
 
         void StartWebServer()
         {
-            if (mFileServer != null)
-                mFileServer.Stop();
+            if (mHttpServer != null)
+                mHttpServer.Stop();
+            if (mHttpsServer != null)
+                mHttpsServer.Stop();
 
             // Get machine name
             string machineName = "";
@@ -242,75 +244,32 @@ namespace Gosub.Viewtop
             labelSecureLink.Text = "Starting...";
             Refresh();
 
-            var httpPrefixes = new List<string>();
-            httpPrefixes.Add("https://*:" + HTTPS_PORT + "/");
-            httpPrefixes.Add("http://*:" + HTTP_PORT + "/" );
-            SetupSecurePort(HTTPS_PORT);
 
-            // *** New custom HTTP web server ***
-            var listener = new TcpListener(IPAddress.Any, CUSTOM_HTTP_PORT);
-            HttpServer server = new HttpServer();
-            server.Start(listener, (stream) => 
-            {
-                // Convert path to Windows, strip leading "\", and choose "index" if no name is given
-                var request = stream.Request;
-                string path = request.Target.Replace('/', Path.DirectorySeparatorChar);
-                while (path.Length != 0 && path[0] == Path.DirectorySeparatorChar)
-                    path = path.Substring(1);
-                if (path.Length == 0)
-                    path = "index.html";
-
-                string publicSubdirectory = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www");
-                string hiddenFileName = Path.DirectorySeparatorChar + ".";
-
-                // Never serve files outside of the public subdirectory, or that begin with a "."
-                path = Path.Combine(publicSubdirectory, path);
-                if (path.Contains("..") || path.Contains(hiddenFileName) )
-                {
-                    stream.FailRequest(400, "Invalid Request: File name is invalid");
-                    return;
-                }
-
-                if (Path.GetExtension(path).ToLower() == ".ovt")
-                {
-                    if (mOvtServer == null)
-                        mOvtServer = new ViewtopServer();
-                    mOvtServer.ProcessWebRemoteViewerRequest(stream);
-                    return;
-                }
-
-                // Static files can only be a GET request
-                if (request.HttpMethod != "GET")
-                    throw new Exception("Invalid HTTP request: Only GET method is allowed for serving ");
-
-                // If this is a file in our local subdirectory, send it to the client
-                if (File.Exists(path))
-                {
-                    // Send local file back to client
-                    stream.SendFile(path);
-                    return;
-                }
-                stream.FailRequest(404, "File not found");
-            });
-
-            /*
+            mOvtServer = new ViewtopServer();
             try
             {
-                // Setup server
-                mFileServer = new FileServer(httpPrefixes.ToArray(), Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "www"));
-                mOvtServer = new ViewtopServer();
-                var ovtServer = mOvtServer; // Do not capture the field, only the local
-                mFileServer.SetRequestHandler("ovt", (context) => { ovtServer.ProcessWebRemoteViewerRequest(context); });
-                mFileServer.Start();
+                // Setup HTTP server
+                var certificate = GetCertificate();
+                mHttpServer = new HttpServer();
+                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT),
+                    (stream) => { mOvtServer.ProcessWebRemoteViewerRequest(stream); });
+
+                // Setup HTTPS server
+                mHttpsServer = new HttpServer();
+                mHttpsServer.UseSsl(certificate);
+                mHttpsServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT),
+                    (stream) => { mOvtServer.ProcessWebRemoteViewerRequest(stream); });
             }
             catch (Exception ex)
             {
-                mFileServer = null;
+                try { mHttpServer.Stop(); } catch { }
+                try { mHttpsServer.Stop(); } catch { }
+                mOvtServer = null;
                 MessageBox.Show(this, "Error starting web server: " + ex.Message, App.Name);
                 labelSecureLink.Text = "Error starting server";
                 return;
             }
-            */
+
             string link = "https://" + machineName + ":" + HTTPS_PORT;
             string text = "Secure: ";
             labelSecureLink.Text = text + link;
@@ -332,9 +291,12 @@ namespace Gosub.Viewtop
 
         void StopWebServer()
         {
-            if (mFileServer != null)
-                mFileServer.Stop();
-            mFileServer = null;
+            if (mHttpServer != null)
+                mHttpServer.Stop();
+            if (mHttpsServer != null)
+                mHttpsServer.Stop();
+            mHttpServer = null;
+            mHttpsServer = null;
             mOvtServer = null;
 
             labelSecureLink.Text = "Web Server stopped";
@@ -347,7 +309,7 @@ namespace Gosub.Viewtop
         }
 
 
-        void SetupSecurePort(string httpsPort)
+        X509Certificate2 GetCertificate()
         {
             try
             {
@@ -364,66 +326,14 @@ namespace Gosub.Viewtop
                     pfx = PFXGenerator.GeneratePfx("OpenViewTop", password);
                     File.WriteAllBytes(pfxPath, pfx);
                 }
-                // Save certificate 
-                X509Certificate2 certificate = new X509Certificate2(pfx, password,
+                return new X509Certificate2(pfx, password,
                     X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
-                X509Store store = new X509Store(StoreLocation.LocalMachine);
-                store.Open(OpenFlags.ReadWrite);
-                store.Add(certificate);
-                store.Close();
-
-                // Setup an invisible shell to install certificates on the SSL port
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.CreateNoWindow = true;
-                psi.FileName = "netsh";
-                psi.UseShellExecute = false;
-                psi.RedirectStandardOutput = true;
-
-                // Delete old certificates
-                psi.Arguments = "http delete sslcert ipport=0.0.0.0:" + httpsPort;
-                Process.Start(psi).WaitForExit();
-                psi.Arguments = "http delete sslcert ipport=[::]:" + httpsPort;
-                Process.Start(psi).WaitForExit();
-
-                // Bind SSL certificate to IPV4 port
-                string appId = "{" + Assembly.GetExecutingAssembly().GetType().GUID.ToString() + "}";
-                psi.Arguments = "http add sslcert ipport=0.0.0.0:" + httpsPort + " certhash=" + certificate.Thumbprint + " appid=" + appId;
-                var p1 = Process.Start(psi);
-                p1.WaitForExit();
-
-                // Bind SSL certificate to IPV6 port
-                psi.Arguments = "http add sslcert ipport=[::]:" + httpsPort + " certhash=" + certificate.Thumbprint + " appid=" + appId;
-                var p2 = Process.Start(psi);
-                p2.WaitForExit();
-
-                if (p1.ExitCode != 0)
-                    throw new Exception("Could not add SSL certificate to the port: " + p1.StandardOutput.ReadToEnd());
-                if (p2.ExitCode != 0)
-                    throw new Exception("Could not add SSL certificate to the port: " + p2.StandardOutput.ReadToEnd());
-
-                if (!IsAdministrator())
-                {
-                    MessageBox.Show(this, "WARNING:  Secure communications (i.e. HTTPS) may not work because this application does not have administrator privileges.", App.Name);
-                }
-
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this, "Error setting up secure link.  Your HTTPS connection may not work.  \r\n\r\n" + ex.Message, App.Name);
             }
-        }
-
-        public static bool IsAdministrator()
-        {
-            try
-            {
-                return (new WindowsPrincipal(WindowsIdentity.GetCurrent()))
-                        .IsInRole(WindowsBuiltInRole.Administrator);
-            }
-            catch
-            {
-                return false;
-            }
+            return null;
         }
 
         private void comboLatency_SelectedIndexChanged(object sender, EventArgs e)

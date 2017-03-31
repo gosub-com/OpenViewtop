@@ -28,6 +28,33 @@ namespace Gosub.Viewtop
             var request = stream.Request;
             var response = stream.Response;
 
+            // Convert path to Windows, strip leading "\", and choose "index" if no name is given
+            string path = request.Target.Replace('/', Path.DirectorySeparatorChar);
+            while (path.Length != 0 && path[0] == Path.DirectorySeparatorChar)
+                path = path.Substring(1);
+            if (path.Length == 0)
+                path = "index.html";
+
+            string publicSubdirectory = Path.Combine(Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath), "www");
+            string hiddenFileName = Path.DirectorySeparatorChar + ".";
+
+            // Never serve files outside of the public subdirectory, or that begin with a "."
+            path = Path.Combine(publicSubdirectory, path);
+            if (path.Contains("..") || path.Contains(hiddenFileName))
+                throw new HttpException(400, "Invalid Request: File name is invalid");
+
+            // Serve static pages unless
+            if (Path.GetExtension(path).ToLower() != ".ovt")
+            {
+                // Static files can only be a GET request
+                if (request.HttpMethod != "GET")
+                    throw new Exception("Invalid HTTP request: Only GET method is allowed for serving ");
+                if (!File.Exists(path))
+                    throw new HttpException(404, "File not found");
+                stream.SendFile(path);
+                return;
+            }
+
             if (!request.Query.TryGetValue("query", out string query))
             {
                 SendJsonError(stream, "Query must include 'query' parameter");

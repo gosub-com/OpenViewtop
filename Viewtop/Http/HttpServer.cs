@@ -8,6 +8,9 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+
 
 namespace Gosub.Http
 {
@@ -21,9 +24,21 @@ namespace Gosub.Http
         object mLock = new object();
         TcpListener mListener;
         HttpHandler mHttpHandler;
+        X509Certificate mCertificate;
 
         public HttpServer()
         {
+        }
+
+        public int HeaderTimeout { get; set; } = 10000;
+        public int BodyTimeout { get; set; } = 60000;
+
+        /// <summary>
+        /// Call this with a certificate to use SSL, or with NULL to disable SSL
+        /// </summary>
+        public void UseSsl(X509Certificate certificate)
+        {
+            mCertificate = certificate;
         }
 
         /// <summary>
@@ -45,7 +60,7 @@ namespace Gosub.Http
                     {
                         // Wait for request
                         var client = mListener.AcceptTcpClient();
-                        ThreadPool.QueueUserWorkItem((obj2) => { TryProcessRequest(client); });
+                        ThreadPool.QueueUserWorkItem((obj2) => { TryProcessRequests(client); });
                     }
                 }
                 catch (Exception ex)
@@ -53,7 +68,6 @@ namespace Gosub.Http
                     Debug.WriteLine("HttpServer exception: " + ex.Message);
                 }
             });
-
         }
 
         public void Stop()
@@ -62,32 +76,112 @@ namespace Gosub.Http
         }
 
         // Each request comes in on a new thread
-        void TryProcessRequest(TcpClient client)
+        void TryProcessRequests(TcpClient client)
         {
-            try
+            using (client)
             {
-                using (client)
-                    ProcessRequest(client);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("Server request failed: " + ex.Message);
+                // Setup stream or SSL stream
+                HttpStream stream;
+                try
+                {                    
+                    if (mCertificate == null)
+                    {
+                        stream = new HttpStream(client.GetStream());
+                    }
+                    else
+                    {
+                        var sslStream = new SslStream(client.GetStream(), false);
+                        sslStream.AuthenticateAsServer(mCertificate);
+                        stream = new HttpStream(sslStream);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("Error setting up stream: " + ex.Message);
+                    return;
+                }
+
+                try
+                {
+                    // Process multiple requests on this TCP stream
+                    ProcessRequests(stream);
+                }
+                catch (HttpException httpEx)
+                {
+                    try
+                    {
+                        ProcessException(stream, httpEx);
+                    }
+                    catch (Exception doubleFaultEx)
+                    {
+                        Debug.WriteLine("ERROR: Failed while trying to send header: " + doubleFaultEx.Message);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("Server request failed: " + ex.Message);
+                }
+
             }
         }
 
-        void ProcessRequest(TcpClient client)
+        private void ProcessRequests(HttpStream stream)
         {
-            var request = new HttpStream();
-            if (request.ParseHeader(client))
+            do
             {
-                if (mHttpHandler != null)
+                // Read header
+                stream.WriteTimeout = HeaderTimeout;
+                stream.ReadTimeout = HeaderTimeout;
+                stream.ParseHeader();
+
+                // Handle body
+                stream.WriteTimeout = BodyTimeout;
+                stream.ReadTimeout = BodyTimeout;
+                try
                 {
-                    mHttpHandler(request);
+                    // Process request
+                    if (mHttpHandler == null)
+                        throw new HttpException(503, "HTTP request handler not installed");
+                    mHttpHandler(stream);
                 }
-                else
+                catch (HttpException ex) when (!ex.TerminateConnection && !stream.Response.HeaderSent)
                 {
-                    request.SendResponse("HTTP request handler not installed");
+                    // Send the error back to the client, but keep the TCP connection open.
+                    // An exception here bubbles up to close the connection.
+                    ProcessException(stream, ex);
                 }
+
+                // Any of these problems will terminate a persistent connection
+                if (!stream.Response.HeaderSent)
+                    throw new HttpException(500, "Request handler did not send a response for: " + stream.Request.TargetFull, true);
+                if (stream.BytesRead != stream.Request.ContentLength && stream.Request.ContentLength >= 0)
+                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + stream.Request.TargetFull, true);
+                if (stream.BytesWritten != stream.Response.ContentLength)
+                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + stream.Request.TargetFull, true);
+
+            } while (stream.Request.KeepAlive && stream.Response.KeepAlive);
+        }
+
+        // Try to send the error message back to the client
+        void ProcessException(HttpStream stream, HttpException ex)
+        {
+            string message = ex.Message;
+            if (ex.Code / 100 == 4)
+            {
+                Debug.WriteLine("CLIENT ERROR " + ex.Code + ": " + ex.Message);
+            }
+            else
+            {
+                // Mask the error text
+                Debug.WriteLine("SERVER ERROR " + ex.Code + ": " + ex.Message);
+                message = "ERROR";
+            }
+
+            if (!stream.Response.HeaderSent)
+            {
+                stream.Response.StatusCode = ex.Code;
+                stream.Response.StatusMessage = message;
+                stream.SendResponse(ex.Message);
             }
         }
     }

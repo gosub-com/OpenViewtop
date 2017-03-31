@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.IO;
 using System.Net.Sockets;
+using System.Net.Security;
 
 namespace Gosub.Http
 {
@@ -18,8 +19,7 @@ namespace Gosub.Http
     /// </summary>
     public class HttpStream : Stream
     {
-        TcpClient mClient;
-        NetworkStream mStream;
+        Stream mStream;
         HttpRequest mRequest;
         HttpResponse mResponse;
 
@@ -40,11 +40,17 @@ namespace Gosub.Http
             { "TRACE", true }
         };
 
-        public HttpRequest Request { get => mRequest; }
-        public HttpResponse Response { get => mResponse; }
+        public HttpRequest Request => mRequest;
+        public HttpResponse Response => mResponse;
+        public long BytesWritten => mBytesWritten;
+        public long BytesRead => mBytesRead;
 
-        internal HttpStream()
+        /// <summary>
+        /// Created only by the HttpServer
+        /// </summary>
+        internal HttpStream(Stream stream)
         {
+            mStream = stream;
         }
 
         public override long Length => throw new NotImplementedException();
@@ -55,8 +61,8 @@ namespace Gosub.Http
         public override void SetLength(long value) { throw new NotImplementedException(); }
         public override long Seek(long offset, SeekOrigin origin) { throw new NotImplementedException(); }
         public override bool CanTimeout => true;
-        public override int ReadTimeout { get => base.ReadTimeout; set => base.ReadTimeout = value; }
-        public override int WriteTimeout { get => base.WriteTimeout; set => base.WriteTimeout = value; }
+        public override int ReadTimeout { get => mStream.ReadTimeout; set => mStream.ReadTimeout = value; }
+        public override int WriteTimeout { get => mStream.WriteTimeout; set => mStream.WriteTimeout = value; }
 
         public override void Flush()
         {
@@ -111,31 +117,29 @@ namespace Gosub.Http
         }
 
         /// <summary>
+        /// Called only by HttpServer
         /// Read and parse the HTTP header, return true if everything worked.
         /// On failure, a response was alreeady sent back to the client.
         /// </summary>
-        internal bool ParseHeader(TcpClient client)
+        internal void ParseHeader()
         {
-            mClient = client;
-            mStream = client.GetStream();
             mRequest = new HttpRequest();
             mResponse = new HttpResponse();
             mRequest.ReceiveDate = DateTime.Now;
+            mHeaderSent = false;
+            mBytesWritten = 0;
+            mBytesRead = 0;
 
-            mClient.ReceiveTimeout = 1000;
+            // Parse header
             var headerParts = ReadLine().Split(' ');
             if (headerParts.Length != 3)
-            {
-                FailRequest(400, "Invalid request line: Needs 3 parts separated by space");
-                return false;
-            }
+                throw new HttpException(400, "Invalid request line: Needs 3 parts separated by space", true);
+
             // Parse method
             mRequest.HttpMethod = headerParts[0];
             if (!mMethods.ContainsKey(mRequest.HttpMethod))
-            {
-                FailRequest(400, "Invalid request line: unknown method");
-                return false;
-            }
+                throw new HttpException(400, "Invalid request line: unknown method", true);
+
             // Parse URL Fragment
             var target = headerParts[1];
             mRequest.TargetFull = target;
@@ -168,23 +172,16 @@ namespace Gosub.Http
             // Parse protocol and version
             var protocolParts = headerParts[2].Split('/');
             if (protocolParts.Length != 2 || protocolParts[0].ToUpper() != "HTTP")
-            {
-                FailRequest(400, "Invalid request line: Unrecognized protocol.  Only HTTP is suppoorted");
-                return false;
-            }
+                throw new HttpException(400, "Invalid request line: Unrecognized protocol.  Only HTTP is supported", true);
+
             var versionParts = protocolParts[1].Split('.');
             if (versionParts.Length != 2
-                || !int.TryParse(versionParts[0], out mRequest.ProtocolVersionMajor)
-                || !int.TryParse(versionParts[1], out mRequest.ProtocolVersionMinor))
-            {
-                FailRequest(400, "Invalid request line: Protocol version format is incorrect (require #.#)");
-                return false;
-            }
+                    || !int.TryParse(versionParts[0], out mRequest.ProtocolVersionMajor)
+                    || !int.TryParse(versionParts[1], out mRequest.ProtocolVersionMinor))
+                throw new HttpException(400, "Invalid request line: Protocol version format is incorrect (require #.#)", true);
+
             if (mRequest.ProtocolVersionMajor != 1)
-            {
-                FailRequest(400, "Expecting HTTP 1.#");
-                return false;
-            }
+                throw new HttpException(400, "Expecting HTTP version 1.#", true);
 
             // Read header fields
             var headers = new HttpRequest.QueryDict();
@@ -193,17 +190,13 @@ namespace Gosub.Http
             {
                 int index;
                 if ((index = fieldLine.IndexOf(':')) < 0)
-                {
-                    FailRequest(400, "Invalid header field: Missing ':'");
-                    return false;
-                }
+                    throw new HttpException(400, "Invalid header field: Missing ':'", true);
+
                 var key = fieldLine.Substring(0, index).Trim().ToLower();
                 var value = fieldLine.Substring(index + 1).Trim();
                 if (key == "" || value == "")
-                {
-                    FailRequest(400, "Invalid header field: Missing key or value");
-                    return false;
-                }
+                    throw new HttpException(400, "Invalid header field: Missing key or value", true);
+
                 headers[key] = value;
             }
 
@@ -213,7 +206,10 @@ namespace Gosub.Http
             mRequest.ContentLength = -1; // Default if not sent
             if (long.TryParse(headers.Get("content-length"), out long contentLength))
                 mRequest.ContentLength = contentLength;
-            return true;
+            bool keepAlive = mRequest.ProtocolVersionMinor >= 1 && mRequest.Headers.Get("connection").ToLower() != "close"
+                || mRequest.Headers.Get("connection").ToLower() == "keep-alive";
+            mRequest.KeepAlive = keepAlive;
+            mResponse.KeepAlive = keepAlive;
         }
 
         /// <summary>
@@ -226,52 +222,46 @@ namespace Gosub.Http
             int ch = mStream.ReadByte();
             while (ch != '\r')
             {
-                if (ch < 0 || ch == '\n')
-                    throw new Exception("ReadHeaderLine: Expecting <CR>, found <LF> or <EOF>");
+                if (ch < 0 )
+                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <EOF>", true);
+                if (ch == '\n')
+                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <LF>", true);
                 sb.Append((char)ch);
                 ch = mStream.ReadByte();
             }
             if ( (ch = mStream.ReadByte()) != '\n')
-                throw new Exception("ReadHeaderLine: Expecting <LF>, but found value " + ch);
+                throw new HttpException(400, "ReadHeaderLine: Expecting <LF>, but found value char value " + ch, true);
 
             return sb.ToString();
         }
 
         /// <summary>
-        /// Fail a request (the status message and the body will be the same)
+        /// Send the response header when the stream is read or written
         /// </summary>
-        public void FailRequest(int statusCode, string statusMessage)
-        {
-            mResponse.StatusCode = statusCode;
-            mResponse.StatusMessage = statusMessage;
-            SendResponse(statusMessage);
-        }
-
-        /// <summary>
-        /// Send the response header.  It is not necessary to call this function
-        /// since reading or writing the stream will do it automatically.
-        /// </summary>
-        public void SendHeader()
+        void SendHeader()
         {
             if (mHeaderSent)
                 return;
+            if (mResponse.ContentLength < 0)
+                throw new HttpException(500, "Response requires ContentLength", true);
 
             // Freeze header
             mHeaderSent = true;
             mResponse.HeaderSent = true;
 
             // Check status messahe
-            var statusMessage = mResponse.StatusMessage;
-            if (mResponse.StatusCode == 200 && statusMessage == "OK")
+            var statusMessage = mResponse.StatusMessage.Replace('\r', ' ').Replace('\n', ' ');
+            if (mResponse.StatusCode != 200 && statusMessage == "OK")
                 statusMessage = "?";
-            if (statusMessage.IndexOf('\r') >= 0 || statusMessage.IndexOf('\n') >= 0)
-                throw new Exception("Error: Error message may not contain \\r or \\n");
 
             // Send message
-            var sw = new StreamWriter(mClient.GetStream(), mUtf8NoBom, 1024, true);
+            var sw = new StreamWriter(mStream, mUtf8NoBom, 1024, true);
             sw.WriteLine("HTTP/1.1 " + mResponse.StatusCode + " " + statusMessage);
-            if (mResponse.ContentLength >= 0)
-                sw.WriteLine("Content-Length:" + mResponse.ContentLength);
+            sw.WriteLine("Content-Length:" + mResponse.ContentLength);
+            if (!Response.KeepAlive)
+                sw.WriteLine("Connection:close");
+            if (Response.KeepAlive && Request.ProtocolVersionMinor == 0)
+                sw.WriteLine("Connection:keep-alive");
             sw.WriteLine("");
             sw.Dispose();
         }
@@ -286,7 +276,6 @@ namespace Gosub.Http
         {
             SendResponse(mUtf8NoBom.GetBytes(message));
         }
-
 
         public void SendResponse(string message, int statusCode)
         {
@@ -308,27 +297,17 @@ namespace Gosub.Http
             // TBD: Fix this since it is not required by the HTTP protocol,
             //      we get away with it because major browsers always include it
             if (mRequest.ContentLength < 0)
-                throw new Exception("Error: HTTP header did not contain 'Content-Length' which is currently required");
+                throw new HttpException(411, "Error: HTTP header did not contain 'Content-Length' which is currently required", true);
             if (mRequest.ContentLength > maxLength)
-                throw new Exception("Error: Content length is too large");
+                throw new HttpException(413, "Error: Content length is too large", true);
 
             // Read specific number of bytes (TBD: Enforce timeout)
             var buffer = new byte[mRequest.ContentLength];
             int index = 0;
-            try
-            {
-                while (index < buffer.Length)
-                    index += Read(buffer, index, buffer.Length - index);
-            }
-            catch (Exception ex)
-            {
-                throw; // Debug
-            }
-
+            while (index < buffer.Length)
+                index += Read(buffer, index, buffer.Length - index);
             return buffer;
         }
-
-
 
     }
 }

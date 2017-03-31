@@ -73,6 +73,7 @@
     <Compile Include="GridWithoutAutoSelect.Designer.cs">
       <DependentUpon>GridWithoutAutoSelect.cs</DependentUpon>
     </Compile>
+    <Compile Include="Http\HttpExceptions.cs" />
     <Compile Include="Http\HttpStream.cs" />
     <Compile Include="Http\HttpRequest.cs" />
     <Compile Include="Http\HttpResponse.cs" />
@@ -81,7 +82,6 @@
     <Compile Include="Viewtop\Beacon.cs" />
     <Compile Include="Viewtop\BlockWriter.cs" />
     <Compile Include="Viewtop\Clip.cs" />
-    <Compile Include="Viewtop\FileServer.cs" />
     <Compile Include="FormMain.cs">
       <SubType>Form</SubType>
     </Compile>

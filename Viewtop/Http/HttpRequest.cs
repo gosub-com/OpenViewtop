@@ -30,6 +30,7 @@ namespace Gosub.Http
         public QueryDict Headers;
         public string Host;
         public long ContentLength;
+        public bool KeepAlive;
 
         /// <summary>
         /// Quickie class to make it easier to use the query string
