@@ -9,26 +9,19 @@ using System.Net.Security;
 
 namespace Gosub.Http
 {
-    /// <summary>
-    /// This is an HTTP stream, which will have the request header when you receive it.
-    /// Fill out the response before reading or writing to the stream.  The response
-    /// header cannot be changed after reading or writing the stream.
-    /// You do not have to close/dispose the stream, but you may if you want.
-    /// 
-    /// TBD: Set ContentLength to reuse the TCP connection?
-    /// </summary>
-    public class HttpStream : Stream
+    public class HttpConext
     {
-        Stream mStream;
+        const int HTTP_HEADER_MAX_SIZE = 16000;
+
         HttpRequest mRequest;
         HttpResponse mResponse;
-
+        HttpReader mReader;
+        HttpWriter mWriter;
         bool mHeaderSent;
-        long mBytesWritten;
-        long mBytesRead;
+
         Encoding mUtf8NoBom = new UTF8Encoding(false); // Necessary because Encoding.UTF8 writes BOM
 
-        Dictionary<string, bool> mMethods = new Dictionary<string, bool>()
+        static Dictionary<string, bool> mMethods = new Dictionary<string, bool>()
         {
             { "GET", true },
             { "HEAD", true },
@@ -40,98 +33,79 @@ namespace Gosub.Http
             { "TRACE", true }
         };
 
-        public HttpRequest Request => mRequest;
-        public HttpResponse Response => mResponse;
-        public long BytesWritten => mBytesWritten;
-        public long BytesRead => mBytesRead;
-
         /// <summary>
         /// Created only by the HttpServer
         /// </summary>
-        internal HttpStream(Stream stream)
+        internal HttpConext(HttpReader reader, HttpWriter writer)
         {
-            mStream = stream;
+            mReader = reader;
+            mWriter = writer;
         }
 
-        public override long Length => throw new NotImplementedException();
-        public override long Position { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public override bool CanRead => true;
-        public override bool CanWrite => true;
-        public override bool CanSeek => false;
-        public override void SetLength(long value) { throw new NotImplementedException(); }
-        public override long Seek(long offset, SeekOrigin origin) { throw new NotImplementedException(); }
-        public override bool CanTimeout => true;
-        public override int ReadTimeout { get => mStream.ReadTimeout; set => mStream.ReadTimeout = value; }
-        public override int WriteTimeout { get => mStream.WriteTimeout; set => mStream.WriteTimeout = value; }
+        public HttpRequest Request => mRequest;
+        public HttpResponse Response => mResponse;
 
-        public override void Flush()
-        {
-            mStream.Flush();
-        }
-
-        public override void Close()
-        {
-            // We do not close this stream, the web server will do that
-            mStream.Flush();
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            // We do not dispose this stream, the web server will do that
-            mStream.Flush();
-        }
-
-        public override int Read(byte[] buffer, int offset, int count)
+        /// <summary>
+        /// Write the HTTP response header and return the input stream.  
+        /// The response header may not be modified after calling this function.
+        /// NOTE: If you have not set Response.ContentLength, this will set it to zero
+        /// </summary>
+        public HttpReader GetReader()
         {
             if (!mHeaderSent)
+            {
+                mResponse.ContentLength = Math.Max(0, mResponse.ContentLength);
                 SendHeader();
-            var length = mStream.Read(buffer, offset, count);
-            mBytesRead += length;
-            return length;
+            }
+            return mReader;
         }
 
-        public override int ReadByte()
+        /// <summary>
+        /// Write the HTTP response header and return the output stream.
+        /// The response may not be modified after calling this function.
+        /// </summary>
+        public HttpWriter GetWriter(long contentLength)
         {
             if (!mHeaderSent)
+            {
+                if (contentLength < 0)
+                    throw new HttpException(500, "GetWriter: ContentLength must be >= zero", true);
+                mResponse.ContentLength = contentLength;
                 SendHeader();
-            int b = mStream.ReadByte();
-            if (b >= 0)
-                mBytesRead++;
-            return b;
-        }
-
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            if (!mHeaderSent)
-                SendHeader();
-            mBytesWritten += count;
-            mStream.Write(buffer, offset, count);
-        }
-
-        public override void WriteByte(byte value)
-        {
-            if (!mHeaderSent)
-                SendHeader();
-            mBytesWritten++;
-            mStream.WriteByte(value);
+            }
+            if (contentLength !=  mResponse.ContentLength)
+                throw new HttpException(500, "GetWriter: ContentLength cannot be changed once it is set");
+            return mWriter;
         }
 
         /// <summary>
         /// Called only by HttpServer
         /// Read and parse the HTTP header, return true if everything worked.
-        /// On failure, a response was alreeady sent back to the client.
+        /// Returns false at EOF and throws an exception on error.
         /// </summary>
-        internal void ParseHeader()
+        internal bool ReadHeader()
         {
             mRequest = new HttpRequest();
             mResponse = new HttpResponse();
             mRequest.ReceiveDate = DateTime.Now;
             mHeaderSent = false;
-            mBytesWritten = 0;
-            mBytesRead = 0;
+            mReader.PositionInternal = 0;
+            mReader.LengthInternal = HTTP_HEADER_MAX_SIZE;
 
-            // Parse header
-            var headerParts = ReadLine().Split(' ');
+            // Check for end of stream (TBD: Improve this)            
+            int ch;
+            try
+            {
+                ch = mReader.ReadByte();
+                if (ch < 0)
+                    return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+
+            var headerParts = ((char)ch + ReadLine()).Split(' ');
             if (headerParts.Length != 3)
                 throw new HttpException(400, "Invalid request line: Needs 3 parts separated by space", true);
 
@@ -150,7 +124,7 @@ namespace Gosub.Http
                 target = target.Substring(0, fragmentIndex);
             }
             // Parse URL query string
-            var queryStrings = new HttpRequest.QueryDict();
+            var queryStrings = new HttpQuery();
             int queryIndex = target.IndexOf('?');
             if (queryIndex >= 0)
             {
@@ -184,7 +158,7 @@ namespace Gosub.Http
                 throw new HttpException(400, "Expecting HTTP version 1.#", true);
 
             // Read header fields
-            var headers = new HttpRequest.QueryDict();
+            var headers = new HttpQuery();
             string fieldLine;
             while ((fieldLine = ReadLine()) != "")
             {
@@ -210,6 +184,8 @@ namespace Gosub.Http
                 || mRequest.Headers.Get("connection").ToLower() == "keep-alive";
             mRequest.KeepAlive = keepAlive;
             mResponse.KeepAlive = keepAlive;
+
+            return true;
         }
 
         /// <summary>
@@ -219,43 +195,46 @@ namespace Gosub.Http
         {
             // NOTE: Improve performance using block reads to a buffer when we get a chance
             StringBuilder sb = new StringBuilder();
-            int ch = mStream.ReadByte();
+            int ch = mReader.ReadByte();
             while (ch != '\r')
             {
-                if (ch < 0 )
+                if (ch < 0)
                     throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <EOF>", true);
                 if (ch == '\n')
                     throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <LF>", true);
                 sb.Append((char)ch);
-                ch = mStream.ReadByte();
+                ch = mReader.ReadByte();
             }
-            if ( (ch = mStream.ReadByte()) != '\n')
+            if ((ch = mReader.ReadByte()) != '\n')
                 throw new HttpException(400, "ReadHeaderLine: Expecting <LF>, but found value char value " + ch, true);
 
             return sb.ToString();
         }
 
+
         /// <summary>
-        /// Send the response header when the stream is read or written
+        /// Send the response header before the stream is read or written
         /// </summary>
         void SendHeader()
         {
             if (mHeaderSent)
-                return;
+                throw new HttpException(500, "SendHeader: Not allowed to send header twice", true);
             if (mResponse.ContentLength < 0)
-                throw new HttpException(500, "Response requires ContentLength", true);
+                throw new HttpException(500, "SendHeader: ConentLength must be set before sending header", true);
 
-            // Freeze header
+            // Freeze response header and setup to write header
             mHeaderSent = true;
             mResponse.HeaderSent = true;
+            mWriter.PositionInternal = 0;
+            mWriter.LengthInternal = HTTP_HEADER_MAX_SIZE;
 
-            // Check status messahe
+            // Check status message
             var statusMessage = mResponse.StatusMessage.Replace('\r', ' ').Replace('\n', ' ');
             if (mResponse.StatusCode != 200 && statusMessage == "OK")
                 statusMessage = "?";
 
-            // Send message
-            var sw = new StreamWriter(mStream, mUtf8NoBom, 1024, true);
+            // Send header
+            var sw = new StreamWriter(mWriter, mUtf8NoBom, 1024, true);
             sw.WriteLine("HTTP/1.1 " + mResponse.StatusCode + " " + statusMessage);
             sw.WriteLine("Content-Length:" + mResponse.ContentLength);
             if (!Response.KeepAlive)
@@ -264,12 +243,18 @@ namespace Gosub.Http
                 sw.WriteLine("Connection:keep-alive");
             sw.WriteLine("");
             sw.Dispose();
+
+            // Good to go, reset streams
+            mReader.PositionInternal = 0;
+            mReader.LengthInternal = Math.Max(0, mRequest.ContentLength);
+            mWriter.PositionInternal = 0;
+            mWriter.LengthInternal = Math.Max(0, mResponse.ContentLength);
         }
 
         public void SendResponse(byte []message)
         {
             mResponse.ContentLength = message.Length;
-            Write(message, 0, message.Length);
+            GetWriter(message.Length).Write(message, 0, message.Length);
         }
 
         public void SendResponse(string message)
@@ -286,8 +271,7 @@ namespace Gosub.Http
         public void SendFile(string path)
         {
             var stream = File.OpenRead(path);
-            mResponse.ContentLength = stream.Length;
-            stream.CopyTo(this);
+            stream.CopyTo(GetWriter(stream.Length));
             stream.Close();
         }
 
@@ -302,10 +286,11 @@ namespace Gosub.Http
                 throw new HttpException(413, "Error: Content length is too large", true);
 
             // Read specific number of bytes (TBD: Enforce timeout)
+            var stream = GetReader();
             var buffer = new byte[mRequest.ContentLength];
             int index = 0;
             while (index < buffer.Length)
-                index += Read(buffer, index, buffer.Length - index);
+                index += stream.Read(buffer, index, buffer.Length - index);
             return buffer;
         }
 

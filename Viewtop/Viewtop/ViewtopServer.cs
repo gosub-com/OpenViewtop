@@ -23,7 +23,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpStream stream)
+        public void ProcessWebRemoteViewerRequest(HttpConext stream)
         {
             var request = stream.Request;
             var response = stream.Response;
@@ -112,7 +112,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Error messages from the viewtop server are in JSON with code 200
         /// </summary>
-        public static void SendJsonError(HttpStream stream, string message)
+        public static void SendJsonError(HttpConext stream, string message)
         {
             stream.SendResponse(@"{""FAIL"":""" +
                 message.Replace("\"", "\\\"").Replace("\\", "\\\\")

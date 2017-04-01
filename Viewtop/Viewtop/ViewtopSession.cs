@@ -103,7 +103,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpStream stream)
+        public void ProcessWebRemoteViewerRequest(HttpConext stream)
         {
             LastRequestTime = DateTime.Now;
             var request = stream.Request;
@@ -237,7 +237,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Retrieve the requested frame
         /// </summary>
-        bool WaitForImageOrTimeout(long sequence, out FrameInfo frame, HttpRequest.QueryDict queryString)
+        bool WaitForImageOrTimeout(long sequence, out FrameInfo frame, HttpQuery queryString)
         {
             // If a future frame is receivied, wait for it or timeout.
             DateTime now = DateTime.Now;
@@ -291,7 +291,7 @@ namespace Gosub.Viewtop
             }
         }
 
-        void GetFrame(FrameInfo frame, HttpRequest.QueryDict queryString)
+        void GetFrame(FrameInfo frame, HttpQuery queryString)
         {
             if (mCollector == null)
                 mCollector = new FrameCollector();
@@ -439,7 +439,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Send the clipboard files, multiple files get zipped
         /// </summary>
-        void SendClipData(HttpStream stream)
+        void SendClipData(HttpConext stream)
         {
             if (mClip.ContainsText())
             {

@@ -74,10 +74,13 @@
       <DependentUpon>GridWithoutAutoSelect.cs</DependentUpon>
     </Compile>
     <Compile Include="Http\HttpExceptions.cs" />
-    <Compile Include="Http\HttpStream.cs" />
+    <Compile Include="Http\HttpContext.cs" />
+    <Compile Include="Http\HttpQuery.cs" />
+    <Compile Include="Http\HttpReader.cs" />
     <Compile Include="Http\HttpRequest.cs" />
     <Compile Include="Http\HttpResponse.cs" />
     <Compile Include="Http\HttpServer.cs" />
+    <Compile Include="Http\HttpWriter.cs" />
     <Compile Include="Settings.cs" />
     <Compile Include="Viewtop\Beacon.cs" />
     <Compile Include="Viewtop\BlockWriter.cs" />

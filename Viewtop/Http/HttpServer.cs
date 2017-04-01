@@ -19,7 +19,7 @@ namespace Gosub.Http
     /// </summary>
     public class HttpServer
     {
-        public delegate void HttpHandler(HttpStream HttpStream);
+        public delegate void HttpHandler(HttpConext HttpStream);
 
         object mLock = new object();
         TcpListener mListener;
@@ -81,36 +81,40 @@ namespace Gosub.Http
             using (client)
             {
                 // Setup stream or SSL stream
-                HttpStream stream;
+                HttpConext context;
+                HttpReader reader;
+                HttpWriter writer;
                 try
-                {                    
-                    if (mCertificate == null)
+                {
+                    var tcpStream = (Stream)client.GetStream();
+                    if (mCertificate != null)
                     {
-                        stream = new HttpStream(client.GetStream());
-                    }
-                    else
-                    {
-                        var sslStream = new SslStream(client.GetStream(), false);
+                        // Wrap stream in an SSL stream, and authenticate
+                        var sslStream = new SslStream(tcpStream, false);
                         sslStream.AuthenticateAsServer(mCertificate);
-                        stream = new HttpStream(sslStream);
+                        tcpStream = sslStream;
                     }
+                    reader = new HttpReader(tcpStream);
+                    writer = new HttpWriter(tcpStream);
+                    context = new HttpConext(reader, writer);
+
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine("Error setting up stream: " + ex.Message);
+                    Debug.WriteLine("Error setting up context: " + ex.Message);
                     return;
                 }
 
                 try
                 {
                     // Process multiple requests on this TCP stream
-                    ProcessRequests(stream);
+                    ProcessRequests(context, reader, writer);
                 }
                 catch (HttpException httpEx)
                 {
                     try
                     {
-                        ProcessException(stream, httpEx);
+                        ProcessException(context, httpEx);
                     }
                     catch (Exception doubleFaultEx)
                     {
@@ -121,49 +125,48 @@ namespace Gosub.Http
                 {
                     Debug.WriteLine("Server request failed: " + ex.Message);
                 }
-
             }
         }
 
-        private void ProcessRequests(HttpStream stream)
+        private void ProcessRequests(HttpConext context, HttpReader reader, HttpWriter writer)
         {
             do
             {
                 // Read header
-                stream.WriteTimeout = HeaderTimeout;
-                stream.ReadTimeout = HeaderTimeout;
-                stream.ParseHeader();
+                reader.ReadTimeout = HeaderTimeout;
+                if (!context.ReadHeader())
+                    return; // EOF
 
                 // Handle body
-                stream.WriteTimeout = BodyTimeout;
-                stream.ReadTimeout = BodyTimeout;
+                reader.ReadTimeout = HeaderTimeout;
+                writer.WriteTimeout = HeaderTimeout;
                 try
                 {
                     // Process request
                     if (mHttpHandler == null)
                         throw new HttpException(503, "HTTP request handler not installed");
-                    mHttpHandler(stream);
+                    mHttpHandler(context);
                 }
-                catch (HttpException ex) when (!ex.TerminateConnection && !stream.Response.HeaderSent)
+                catch (HttpException ex) when (!ex.TerminateConnection && !context.Response.HeaderSent)
                 {
                     // Send the error back to the client, but keep the TCP connection open.
                     // An exception here bubbles up to close the connection.
-                    ProcessException(stream, ex);
+                    ProcessException(context, ex);
                 }
 
                 // Any of these problems will terminate a persistent connection
-                if (!stream.Response.HeaderSent)
-                    throw new HttpException(500, "Request handler did not send a response for: " + stream.Request.TargetFull, true);
-                if (stream.BytesRead != stream.Request.ContentLength && stream.Request.ContentLength >= 0)
-                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + stream.Request.TargetFull, true);
-                if (stream.BytesWritten != stream.Response.ContentLength)
-                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + stream.Request.TargetFull, true);
+                if (!context.Response.HeaderSent)
+                    throw new HttpException(500, "Request handler did not send a response for: " + context.Request.TargetFull, true);
+                if (reader.Position != context.Request.ContentLength && context.Request.ContentLength >= 0)
+                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + context.Request.TargetFull, true);
+                if (writer.Position != context.Response.ContentLength)
+                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + context.Request.TargetFull, true);
 
-            } while (stream.Request.KeepAlive && stream.Response.KeepAlive);
+            } while (context.Request.KeepAlive && context.Response.KeepAlive);
         }
 
         // Try to send the error message back to the client
-        void ProcessException(HttpStream stream, HttpException ex)
+        void ProcessException(HttpConext context, HttpException ex)
         {
             string message = ex.Message;
             if (ex.Code / 100 == 4)
@@ -177,11 +180,11 @@ namespace Gosub.Http
                 message = "ERROR";
             }
 
-            if (!stream.Response.HeaderSent)
+            if (!context.Response.HeaderSent && !ex.TerminateConnection)
             {
-                stream.Response.StatusCode = ex.Code;
-                stream.Response.StatusMessage = message;
-                stream.SendResponse(ex.Message);
+                context.Response.StatusCode = ex.Code;
+                context.Response.StatusMessage = message;
+                context.SendResponse(ex.Message);
             }
         }
     }

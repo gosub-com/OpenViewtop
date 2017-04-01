@@ -24,29 +24,12 @@ namespace Gosub.Http
         public string TargetFull;
         public string QueryFull;
         public string Fragment;
-        public QueryDict Query;
+        public HttpQuery Query;
 
         // Headers
-        public QueryDict Headers;
+        public HttpQuery Headers;
         public string Host;
         public long ContentLength;
         public bool KeepAlive;
-
-        /// <summary>
-        /// Quickie class to make it easier to use the query string
-        /// </summary>
-        public class QueryDict : Dictionary<string, string>
-        {
-            /// <summary>
-            /// Return the key or "" if not found
-            /// </summary>
-            public string Get(string key)
-            {
-                if (!TryGetValue(key, out string value))
-                    value = "";
-                return value;
-            }
-
-        }
     }
 }
