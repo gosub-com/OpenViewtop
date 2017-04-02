@@ -29,6 +29,7 @@ function Viewtop(drawString, canvas)
     var mFpsCounter = 0;
     var mFpsTime = Date.now();
 
+    var mWebSocket = null;
     var mGetSequence = 1;
     var mGetSendTime = 0;
 
@@ -64,13 +65,13 @@ function Viewtop(drawString, canvas)
     this.DrawOptions = "";
 
     // Start the session
-    this.Start = function (username, password)
+    this.Start = function (username, password, useXhr)
     {
         mUsername = username;
         mPassword = password;
         mRunning = true;
         InitializeCanvas();
-        StartSession(username, password);
+        StartSession(useXhr);
 
         mCanvas.onmousemove = OnMouseMove;
         mCanvas.onmousedown = OnMouseDown;
@@ -188,7 +189,9 @@ function Viewtop(drawString, canvas)
         e.stopPropagation();
     }
 
-    function StartSession()
+
+    // Start session using XmlHttpRequest
+    function StartSession(useXhr)
     {
         HttpGet("index.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername,
         function ()
@@ -197,11 +200,66 @@ function Viewtop(drawString, canvas)
                 return;
             var sessionInfo = JSON.parse(this.responseText);
             mSessionId = sessionInfo.sid;
-            Login(sessionInfo.salt, sessionInfo.challenge);
+
+            if (useXhr)
+                LoginXhr(sessionInfo.salt, sessionInfo.challenge);
+            else
+                LoginWs(sessionInfo.salt, sessionInfo.challenge);
         });
     }
 
-    function Login(salt, challenge)
+    function LoginWs(salt, challenge)
+    {
+        var protocol = (location.protocol == "https:" ? "wss" : "ws") + "://";
+        var path = "/index.ovt";
+        var query = "?query=ws&sid=" + mSessionId;
+        mWebSocket = new WebSocket(protocol + location.host + path + query, "viewtop");
+
+        mWebSocket.onerror = function (event)
+        {
+            mRunning = false;
+            ShowError("Web socket error");
+        }
+        mWebSocket.onclose = function (event)
+        {
+            // TBD: Sometimes the close reason doesn't get sent and there is an exception
+            //      thrown on the server 'System.Net.WebSockets.WebSocketException' in mscorlib.dll
+            mRunning = false;
+            ShowError(event.reason == "" ? "Closed by remote: " + event.code  : event.reason);
+        }
+        mWebSocket.onopen = function (event)
+        {
+            var login =
+            {
+                Username: mUsername,
+                PasswordHash: Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase()
+            };
+            mWebSocket.send(JSON.stringify(login));
+            setTimeout(function () { EventsLoopWs(); }, 1000);
+        }
+        mWebSocket.onmessage = function (event)
+        {
+            console.log("Websockets receive: " + event.data);
+            var message = JSON.parse(event.data);
+
+            // Show computer name
+            if (message.ComputerName)
+                THIS.ComputerNameLabel.innerHTML = message.ComputerName;
+        }
+    }
+
+    // Main event processing loop, call ProcessEventsXhr every 23 milliseconds
+    function EventsLoopWs()
+    {
+        console.log("EventsLoopWs");
+        if (!mRunning)
+            return;
+        setTimeout(function () { EventsLoopWs(); }, 1000);
+        mWebSocket.send("hello");
+    }
+
+
+    function LoginXhr(salt, challenge)
     {
         HttpGet("index.ovt?query=login&sid=" + mSessionId
                 + "&username=" + mUsername
@@ -217,22 +275,22 @@ function Viewtop(drawString, canvas)
                 return;
             }
             THIS.ComputerNameLabel.innerHTML = loginInfo.ComputerName;
-            EventsLoop();
+            EventsLoopXhr();
         });
     }
 
-    // Main event processing loop, call ProcessEvents every 23 milliseconds
-    function EventsLoop()
+    // Main event processing loop, call ProcessEventsXhr every 23 milliseconds
+    function EventsLoopXhr()
     {
         if (!mRunning)
             return;
-        setTimeout(function () { EventsLoop(); }, 23);
-        ProcessEvents();
+        setTimeout(function () { EventsLoopXhr(); }, 23);
+        ProcessEventsXhr();
     }
 
     // Process all events.  Called every 23 milliseconds or whenever
     // something is done processing (draw frame, keyboard, etc.)
-    function ProcessEvents()
+    function ProcessEventsXhr()
     {
         if (!mRunning)
             return;
@@ -252,16 +310,16 @@ function Viewtop(drawString, canvas)
             // Request frame
             var getsOutstanding = mGetSequence - mDrawSequence;
             if (getsOutstanding == 0)
-                LoadFrame();
+                LoadFrameXhr();
 
             // Request next frame before receiving previous frame 
             // (i.e. double buffer) to reduce the round trip time latency.  
             if (getsOutstanding == 1 && Date.now() - mGetSendTime > mRtt * RTT_TRIGGER_RATIO - RTT_TRIGGER_MIN_MS)
-                LoadFrame();
+                LoadFrameXhr();
 
             // Send mouse and keyboard events
             if (mPutsOutstanding == 0 && mKeyAndMouseEvents.length != 0)
-                SendEvents();
+                SendEventsXhr();
         }
         catch (e)
         {
@@ -270,7 +328,7 @@ function Viewtop(drawString, canvas)
         }
     }
 
-    function SendEvents()
+    function SendEventsXhr()
     {
         var jsonObject = { Events: mKeyAndMouseEvents};
         mKeyAndMouseEvents = [];
@@ -287,11 +345,11 @@ function Viewtop(drawString, canvas)
             if (!HttpDone(this, "Send events failed"))
                 return;
             mPutsOutstanding--;
-            ProcessEvents();
+            ProcessEventsXhr();
         });
     }
 
-    function LoadFrame()
+    function LoadFrameXhr()
     {
         var sequence = mGetSequence;
         mGetSequence = mGetSequence + 1;
@@ -318,12 +376,12 @@ function Viewtop(drawString, canvas)
             if (!HttpDone(this, "Frame request failed"))
                 return;
             SetRtt(Date.now() - sendTime);
-            LoadImagesThenQueue(JSON.parse(this.responseText), sequence);
+            LoadImagesThenQueueXhr(JSON.parse(this.responseText), sequence);
         });
     }
 
     // Load all the images in parallel, then queue the frame to be drawn in the order received
-    function LoadImagesThenQueue(drawBuffer, sequence)
+    function LoadImagesThenQueueXhr(drawBuffer, sequence)
     {
         var frames = drawBuffer.Frames;
         var totalImagesLoaded = 0;
@@ -339,7 +397,7 @@ function Viewtop(drawString, canvas)
                 {
                     // Queue the image
                     mDrawQueue[sequence] = drawBuffer;
-                    ProcessEvents();
+                    ProcessEventsXhr();
                 }
             });
             image.onerror = function ()
