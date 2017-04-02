@@ -10,6 +10,8 @@ using System.Collections.Specialized;
 using System.Text;
 using System.IO;
 using System.IO.Compression;
+using System.Net.WebSockets;
+using System.Threading.Tasks;
 
 namespace Gosub.Viewtop
 {
@@ -64,6 +66,8 @@ namespace Gosub.Viewtop
 
         class LoginInfo
         {
+            public string Username = "";
+            public string PasswordHash = "";
             public bool LoggedIn;
             public string ComputerName = "(unknown)";
         }
@@ -109,39 +113,24 @@ namespace Gosub.Viewtop
             var response = context.Response;
             string query = request.QueryString["query"];
 
+            // Websockets!
+            if (context.Request.IsWebSocketRequest)
+            {
+                HandleWebSocketRequest(context);
+                return;
+            }
+
             if (query == "startsession")
             {
                 // Send session id, password salt, and challenge
-                mChallenge = Util.GenerateSalt();
-                var user = UserFile.Load().Find(request.QueryString["username"]);
-                string salt = user != null ? user.Salt : Util.GenerateSalt();
-                FileServer.SendResponse(response,
-                    @"{""sid"": " + SessionId
-                    + @",""challenge"":""" + mChallenge
-                    + @""",""salt"":""" + salt + @"""}", 200);
+                FileServer.SendResponse(response, GetChallenge(request.QueryString["username"]), 200);
                 return;
             }
 
             if (query == "login")
             {
-                // Authenticate user
-                string username = request.QueryString["username"];
-                var passwordHash = request.QueryString["hash"];
-                if (username != null && passwordHash != null)
-                {
-                    var user = UserFile.Load().Find(username);
-                    if (user != null)
-                        mAuthenticated = user.VerifyPassword(mChallenge, passwordHash);
-                }
-                // Send response
-                var loginInfo = new LoginInfo();
-                loginInfo.LoggedIn = mAuthenticated;
-                if (mAuthenticated)
-                {
-                    try { loginInfo.ComputerName = Dns.GetHostName(); }
-                    catch { }
-                }
-                FileServer.SendResponse(response, JsonConvert.SerializeObject(loginInfo), 200);
+                // Authenticate user, sets mAuthenticated to true if they got in
+                FileServer.SendResponse(response, Authenticate(request.QueryString["username"], request.QueryString["hash"]), 200);
                 return;
             }
 
@@ -195,7 +184,7 @@ namespace Gosub.Viewtop
             {
                 int maxLength = 64000;
                 byte[] buffer = FileServer.GetRequest(request, maxLength);
-                string json = UTF8Encoding.UTF8.GetString(buffer);
+                string json = Encoding.UTF8.GetString(buffer);
                 var events = JsonConvert.DeserializeObject<RemoteEvents>(json);
 
                 foreach (var e in events.Events)
@@ -227,6 +216,107 @@ namespace Gosub.Viewtop
             }
             ViewtopServer.SendJsonError(response, "ERROR: Invalid query name - " + query);
         }
+
+        async void TryHandleWebSocketRequest(HttpListenerContext context)
+        {
+            try
+            {
+                await HandleWebSocketRequest(context);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine("Error handling web socket request: " + ex.Message);
+            }
+        }
+
+        async Task HandleWebSocketRequest(HttpListenerContext context)
+        {
+            // I am not sure why these sleeps are needed but it throws an exception
+            // 'System.Net.WebSockets.WebSocketException' in mscorlib.dll
+            // and closes the connection without them.
+            // Seems like the await is returning too soon or something.
+            //
+            // Actually, this doesn't seem to fix it.  Giving up.
+            const int OUCH_TIME = 100;
+
+            var wsContext = await context.AcceptWebSocketAsync("viewtop", new TimeSpan(0, 0, 1));
+            Thread.Sleep(OUCH_TIME); 
+            var ws = wsContext.WebSocket;
+            var buffer = new byte[100000];
+            var bufferSeg = new ArraySegment<byte>(buffer, 0, buffer.Length);
+
+            // Wait for user name and password hash
+            var requestResult = await ws.ReceiveAsync(bufferSeg, CancellationToken.None);
+            Thread.Sleep(OUCH_TIME);
+            if (!requestResult.EndOfMessage)
+                throw new Exception("Authenticate: End of message not received");
+            var login = JsonConvert.DeserializeObject<LoginInfo>(Encoding.UTF8.GetString(buffer, 0, requestResult.Count));
+            Debug.WriteLine("Got authentication message");
+
+            // Authenticate user and send response, sets mAuthenticated to true if they got in
+            string authenticateResponse = Authenticate(login.Username, login.PasswordHash);
+
+            if (!mAuthenticated)
+            {
+                // End session if not authenticated
+                // TBD: Sometimes the close reason doesn't get sent and there is an exception
+                //      thrown 'System.Net.WebSockets.WebSocketException' in mscorlib.dll
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Invalid user name or password", CancellationToken.None);
+                Thread.Sleep(OUCH_TIME);
+                return;
+            }
+            Debug.WriteLine("Authenticated");
+
+            // Send response info and computer name
+            Debug.WriteLine("Sending info");
+            var count = Encoding.UTF8.GetBytes(authenticateResponse, 0, authenticateResponse.Length, buffer, 0);
+            await ws.SendAsync(new ArraySegment<byte>(buffer, 0, count), WebSocketMessageType.Text, true, CancellationToken.None);
+            Thread.Sleep(OUCH_TIME);
+
+            while (ws.State != WebSocketState.Closed && ws.State != WebSocketState.CloseReceived)
+            {
+                Debug.WriteLine("Reading info");
+
+                // Always get 'System.Net.WebSockets.WebSocketException' in mscorlib.dll here
+                requestResult = await ws.ReceiveAsync(bufferSeg, CancellationToken.None);
+                Thread.Sleep(OUCH_TIME);
+
+                Debug.WriteLine("Got info: " + Encoding.UTF8.GetString(buffer, 0, requestResult.Count));
+            }
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None);
+        }
+
+        private string GetChallenge(string userName)
+        {
+            mChallenge = Util.GenerateSalt();
+            var user = UserFile.Load().Find(userName);
+            string salt = user != null ? user.Salt : Util.GenerateSalt();
+            string challenge = @"{""sid"": " + SessionId
+                + @",""challenge"":""" + mChallenge
+                + @""",""salt"":""" + salt + @"""}";
+            return challenge;
+        }
+
+        private string Authenticate(string username, string passwordHash)
+        {
+            if (username != null && passwordHash != null)
+            {
+                var user = UserFile.Load().Find(username);
+                if (user != null)
+                    mAuthenticated = user.VerifyPassword(mChallenge, passwordHash);
+            }
+            // Generate response
+            var loginInfo = new LoginInfo();
+            loginInfo.LoggedIn = mAuthenticated;
+            if (mAuthenticated)
+            {
+                try { loginInfo.ComputerName = Dns.GetHostName(); }
+                catch { }
+            }
+            return JsonConvert.SerializeObject(loginInfo);
+        }
+
+
 
         void UpdateMousePositionFromDrawQuery(HttpListenerRequest request)
         {
