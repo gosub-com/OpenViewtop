@@ -26,10 +26,10 @@ namespace Gosub.Http
         public string Fragment;
         public HttpQuery Query;
 
-        // Headers
+        // Common Headers
         public HttpQuery Headers;
         public string Host;
         public long ContentLength;
-        public bool KeepAlive;
+        public bool IsWebSocketRequest;
     }
 }

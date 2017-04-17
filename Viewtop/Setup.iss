@@ -1,8 +1,8 @@
 ﻿[Setup]
 AppName=Open Viewtop
-AppVersion=0.0.6
+AppVersion=0.0.7
 OutputDir=.
-OutputBaseFilename=SetupOpenViewtop-0.0.6
+OutputBaseFilename=SetupOpenViewtop-0.0.7
 UsePreviousAppDir=false
 UsePreviousGroup=false
 DefaultDirName={pf}\Gosub\Open Viewtop

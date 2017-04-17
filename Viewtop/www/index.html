@@ -68,7 +68,7 @@ button::-moz-focus-inner
             <b style="color:red;">Warning:</b> This connection is running over HTTP and is unsecure
         </div>
         <div>
-            <label><input type="checkbox" id="useWebsocketsId">Use Websockets.  It doesn't work yet.</label>
+            <label><input type="checkbox" id="useXhrId">Use XHR (obsolete)</label>
         </div>
     </div>
 
@@ -91,7 +91,7 @@ button::-moz-focus-inner
         <table id="remoteOptionsId" style="display:block">
             <tr>
                 <td>
-                    <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Full frame analysis (disable delta)</label>
+                    <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Disable delta compression</label>
                     <br /> <br />
                     <label><input type="radio" name="compression" id="radioSmartPng" checked="checked" onchange="UpdateOptions()">Smart PNG</label>
                     <br />
@@ -133,7 +133,7 @@ button::-moz-focus-inner
     var mRemoteStats = document.getElementById('remoteStatsId');
     var mUsername = document.getElementById('usernameId');
     var mPassword = document.getElementById('passwordId');
-    var mUseWebsockets = document.getElementById('useWebsocketsId');
+    var mUseXhr = document.getElementById('useXhrId');
     var mErrorMessage = document.getElementById('errorMessageId');
     
     document.getElementById('unsecureWarningId').style.display = location.protocol === "https:" ? "none" : "block";
@@ -156,7 +156,7 @@ button::-moz-focus-inner
         mViewer.ClipboardButton = document.getElementById('clipboardId');
         mViewer.ComputerNameLabel = document.getElementById('computerNameId');
         UpdateOptions();
-        mViewer.Start(mUsername.value, mPassword.value, !mUseWebsockets.checked);
+        mViewer.Start(mUsername.value, mPassword.value, mUseXhr.checked);
     }
 
     function Logout()

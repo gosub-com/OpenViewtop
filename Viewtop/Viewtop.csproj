@@ -80,7 +80,12 @@
     <Compile Include="Http\HttpRequest.cs" />
     <Compile Include="Http\HttpResponse.cs" />
     <Compile Include="Http\HttpServer.cs" />
+    <Compile Include="Http\WebSocket.cs" />
     <Compile Include="Http\HttpWriter.cs" />
+    <Compile Include="Http\WebSocketCloseStatus.cs" />
+    <Compile Include="Http\WebSocketMessageType.cs" />
+    <Compile Include="Http\WebSocketReceiveResult.cs" />
+    <Compile Include="Http\WebSocketState.cs" />
     <Compile Include="Settings.cs" />
     <Compile Include="Viewtop\Beacon.cs" />
     <Compile Include="Viewtop\BlockWriter.cs" />

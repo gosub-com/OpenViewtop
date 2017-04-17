@@ -19,7 +19,7 @@ namespace Gosub.Http
     /// </summary>
     public class HttpServer
     {
-        public delegate void HttpHandler(HttpConext HttpStream);
+        public delegate void HttpHandler(HttpContext HttpStream);
 
         object mLock = new object();
         TcpListener mListener;
@@ -80,12 +80,10 @@ namespace Gosub.Http
         {
             using (client)
             {
-                // Setup stream or SSL stream
-                HttpConext context;
-                HttpReader reader;
-                HttpWriter writer;
+                HttpContext context = null;
                 try
                 {
+                    // Setup stream or SSL stream
                     var tcpStream = (Stream)client.GetStream();
                     if (mCertificate != null)
                     {
@@ -94,47 +92,39 @@ namespace Gosub.Http
                         sslStream.AuthenticateAsServer(mCertificate);
                         tcpStream = sslStream;
                     }
-                    reader = new HttpReader(tcpStream);
-                    writer = new HttpWriter(tcpStream);
-                    context = new HttpConext(reader, writer);
-
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("Error setting up context: " + ex.Message);
-                    return;
-                }
-
-                try
-                {
-                    // Process multiple requests on this TCP stream
+                    // Process requests on this possibly persistent TCP stream
+                    var reader = new HttpReader(tcpStream);
+                    var writer = new HttpWriter(tcpStream);
+                    context = new HttpContext(client, reader, writer);
                     ProcessRequests(context, reader, writer);
                 }
-                catch (HttpException httpEx)
+                catch (Exception ex)
                 {
                     try
                     {
-                        ProcessException(context, httpEx);
+                        ProcessException(context, ex);
                     }
                     catch (Exception doubleFaultEx)
                     {
-                        Debug.WriteLine("ERROR: Failed while trying to send header: " + doubleFaultEx.Message);
+                        Debug.WriteLine("DOUBLE FAULT EXCEPTION while processing exception: " + doubleFaultEx.Message);
                     }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("Server request failed: " + ex.Message);
                 }
             }
         }
 
-        private void ProcessRequests(HttpConext context, HttpReader reader, HttpWriter writer)
+        /// <summary>
+        /// Process requests as long as there is not an error
+        /// </summary>
+        private void ProcessRequests(HttpContext context, HttpReader reader, HttpWriter writer)
         {
+            int persistentConnections = 0;
             do
             {
+                persistentConnections++;
+
                 // Read header
                 reader.ReadTimeout = HeaderTimeout;
-                if (!context.ReadHeader())
+                if (!context.ReadHttpHeader())
                     return; // EOF
 
                 // Handle body
@@ -147,42 +137,69 @@ namespace Gosub.Http
                         throw new HttpException(503, "HTTP request handler not installed");
                     mHttpHandler(context);
                 }
-                catch (HttpException ex) when (!ex.TerminateConnection && !context.Response.HeaderSent)
+                catch (HttpException ex) when (ex.KeepConnectionOpen && !context.Response.HeaderSent)
                 {
-                    // Send the error back to the client, but keep the TCP connection open.
-                    // An exception here bubbles up to close the connection.
+                    // Keep the persisten connection open only if it's OK to do so.
                     ProcessException(context, ex);
                 }
 
                 // Any of these problems will terminate a persistent connection
-                if (!context.Response.HeaderSent)
-                    throw new HttpException(500, "Request handler did not send a response for: " + context.Request.TargetFull, true);
-                if (reader.Position != context.Request.ContentLength && context.Request.ContentLength >= 0)
-                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + context.Request.TargetFull, true);
-                if (writer.Position != context.Response.ContentLength)
-                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + context.Request.TargetFull, true);
+                var response = context.Response;
+                var request = context.Request;
+                var websocket = request.IsWebSocketRequest;
+                if (!response.HeaderSent)
+                    throw new HttpException(500, "Request handler did not send a response for: " + context.Request.TargetFull);
+                if (!websocket && reader.Position != request.ContentLength && request.ContentLength >= 0)
+                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + request.TargetFull);
+                if (!websocket && writer.Position != response.ContentLength)
+                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + request.TargetFull);
 
-            } while (context.Request.KeepAlive && context.Response.KeepAlive);
+                // TBD: Convert web server to be fully async.
+                writer.FlushAsync();
+
+            } while (!context.Request.IsWebSocketRequest && context.Response.KeepAlive);
         }
 
-        // Try to send the error message back to the client
-        void ProcessException(HttpConext context, HttpException ex)
+        // Try to send an error message back to the client
+        void ProcessException(HttpContext context, Exception ex)
         {
-            string message = ex.Message;
-            if (ex.Code / 100 == 4)
+            // Unwrap aggregate exceptions.  Async likes to throw these.
+            var aggEx = ex as AggregateException;
+            if (aggEx != null && aggEx.InnerException != null)
             {
-                Debug.WriteLine("CLIENT ERROR " + ex.Code + ": " + ex.Message);
+                // Unwrap exception
+                Debug.WriteLine("SERVER ERROR: Aggregate with " + aggEx.InnerExceptions.Count + " inner exceptions");
+                ex = ex.InnerException;
+            }
+
+            var code = 500;
+            var message = "Server error";
+            var httpEx = ex as HttpException;
+            if (httpEx != null && httpEx.Code/100 != 5 )
+            {
+                // Allow message to client
+                code = httpEx.Code;
+                message = httpEx.Message;
+                Debug.WriteLine("CLIENT EXCEPTION " + httpEx.Code + ": " + ex.Message);
+            }
+            else if (httpEx != null)
+            {
+                // Allow code to client, but not message
+                code = httpEx.Code;
+                message = "Server error";
+                Debug.WriteLine("SERVER HTTP EXCEPTION " + httpEx.Code + ": " + ex.Message);
             }
             else
             {
-                // Mask the error text
-                Debug.WriteLine("SERVER ERROR " + ex.Code + ": " + ex.Message);
-                message = "ERROR";
+                code = 500;
+                message = "Server error";
+                Debug.WriteLine("SERVER EXCEPTION " + ex.GetType() + ": " + ex.Message);
             }
 
-            if (!context.Response.HeaderSent && !ex.TerminateConnection)
+            // Send response to client if it looks OK to do so
+            if (context != null && !context.Request.IsWebSocketRequest && !context.Response.HeaderSent)
             {
-                context.Response.StatusCode = ex.Code;
+                context.Response.StatusCode = code;
                 context.Response.StatusMessage = message;
                 context.SendResponse(ex.Message);
             }

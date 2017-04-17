@@ -12,6 +12,9 @@
 function Viewtop(drawString, canvas)
 {
     var THIS = this;
+
+    var EVENTS_LOOP_TIME_MS = 7;
+
     var mDrawString = drawString;
     var mCanvas = canvas;
     var mContext = canvas.getContext('2d');
@@ -189,7 +192,6 @@ function Viewtop(drawString, canvas)
         e.stopPropagation();
     }
 
-
     // Start session using XmlHttpRequest
     function StartSession(useXhr)
     {
@@ -201,6 +203,7 @@ function Viewtop(drawString, canvas)
             var sessionInfo = JSON.parse(this.responseText);
             mSessionId = sessionInfo.sid;
 
+            // Use Xhr or Websockets
             if (useXhr)
                 LoginXhr(sessionInfo.salt, sessionInfo.challenge);
             else
@@ -217,47 +220,129 @@ function Viewtop(drawString, canvas)
 
         mWebSocket.onerror = function (event)
         {
-            mRunning = false;
             ShowError("Web socket error");
         }
         mWebSocket.onclose = function (event)
         {
-            // TBD: Sometimes the close reason doesn't get sent and there is an exception
-            //      thrown on the server 'System.Net.WebSockets.WebSocketException' in mscorlib.dll
-            mRunning = false;
             ShowError(event.reason == "" ? "Closed by remote: " + event.code  : event.reason);
         }
         mWebSocket.onopen = function (event)
         {
+            // Send login response
             var login =
             {
                 Username: mUsername,
                 PasswordHash: Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase()
             };
             mWebSocket.send(JSON.stringify(login));
-            setTimeout(function () { EventsLoopWs(); }, 1000);
+            EventsLoopWs();
         }
-        mWebSocket.onmessage = function (event)
-        {
-            console.log("Websockets receive: " + event.data);
-            var message = JSON.parse(event.data);
-
-            // Show computer name
-            if (message.ComputerName)
-                THIS.ComputerNameLabel.innerHTML = message.ComputerName;
-        }
+        mWebSocket.onmessage = function (e) { OnViewtopMessageWs(e); }
     }
 
-    // Main event processing loop, call ProcessEventsXhr every 23 milliseconds
-    function EventsLoopWs()
+    // Process incoming websocket messages
+    function OnViewtopMessageWs(e)
     {
-        console.log("EventsLoopWs");
         if (!mRunning)
             return;
-        setTimeout(function () { EventsLoopWs(); }, 1000);
-        mWebSocket.send("hello");
+
+        var m = JSON.parse(event.data);
+
+        if (m.Event == "Close")
+        {
+            ShowError(m.Message);
+        }
+        if (m.ComputerName !== undefined)
+        {
+            THIS.ComputerNameLabel.innerHTML = m.ComputerName;
+        }
+        if (m.Event == "Draw")
+        {
+            // TBD: Use round trip time, but need to preserve event sent time
+            // SetRtt(Date.now() - sendTime); 
+            mRtt = 30; // TBD: Need to call SetRtt.  Just use 20 milliseconds for now.
+            LoadImagesThenQueue(m, m.Seq);
+        }
     }
 
+    // Main event processing loop for websockets
+    function EventsLoopWs()
+    {
+        if (!mRunning)
+            return;
+
+        try
+        {
+            // Draw frames from the queue
+            var drawBuffer = mDrawQueue[mDrawSequence];
+            while (drawBuffer)
+            {
+                delete mDrawQueue[mDrawSequence];
+                mDrawSequence++;
+                ProcessData(drawBuffer);
+                drawBuffer = mDrawQueue[mDrawSequence];
+            }
+
+            // Request frame
+            var getsOutstanding = mGetSequence - mDrawSequence;
+            if (getsOutstanding == 0)
+                RequestFrameWs();
+
+            // Request next frame before receiving previous frame 
+            // (i.e. double buffer) to reduce the round trip time latency.  
+            if (getsOutstanding == 1 && Date.now() - mGetSendTime > mRtt * RTT_TRIGGER_RATIO - RTT_TRIGGER_MIN_MS)
+                RequestFrameWs();
+
+            // Send mouse and keyboard events
+            if (mKeyAndMouseEvents.length != 0)
+            {
+                var keyAndMouseEvents = { Event: "Events", Events: mKeyAndMouseEvents };
+                mKeyAndMouseEvents = [];
+                mWebSocket.send(JSON.stringify(keyAndMouseEvents));
+            }
+        }
+        catch (e)
+        {
+            mRunning = false;
+            ShowError(e.stack);
+        }
+        setTimeout(function () { EventsLoopWs(); }, EVENTS_LOOP_TIME_MS);
+    }
+
+    function RequestFrameWs()
+    {
+        var sequence = mGetSequence;
+        mGetSequence = mGetSequence + 1;
+
+        // Find canvas size
+        var WINDOW_BORDER_HEIGHT = 40; // Document margin, scroll bar, menu bar at top, etc.
+        var fullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement;
+        var width = fullscreen ? window.innerWidth : document.body.clientWidth;
+        var height = fullscreen ? window.innerHeight : (window.innerHeight - WINDOW_BORDER_HEIGHT);
+
+        // Start downloading the draw buffer
+        var sendTime = Date.now();
+        mGetSendTime = sendTime;
+
+        var event =
+        {
+            DrawRequest:
+            {
+                Seq: sequence,
+                MaxWidth: width,
+                MaxHeight: height,
+                Options: THIS.DrawOptions // Extra options
+            },
+            Events:
+            [{
+                Event: "mousemove",
+                Time: mGetSendTime,
+                X: mMouseX,
+                Y: mMouseY,
+            }]
+        };
+        mWebSocket.send(JSON.stringify(event));
+    }
 
     function LoginXhr(salt, challenge)
     {
@@ -279,18 +364,8 @@ function Viewtop(drawString, canvas)
         });
     }
 
-    // Main event processing loop, call ProcessEventsXhr every 23 milliseconds
+    // Main event processing loop for Xhr
     function EventsLoopXhr()
-    {
-        if (!mRunning)
-            return;
-        setTimeout(function () { EventsLoopXhr(); }, 23);
-        ProcessEventsXhr();
-    }
-
-    // Process all events.  Called every 23 milliseconds or whenever
-    // something is done processing (draw frame, keyboard, etc.)
-    function ProcessEventsXhr()
     {
         if (!mRunning)
             return;
@@ -326,6 +401,7 @@ function Viewtop(drawString, canvas)
             mRunning = false;
             ShowError(e.stack);
         }
+        setTimeout(function () { EventsLoopXhr(); }, EVENTS_LOOP_TIME_MS);
     }
 
     function SendEventsXhr()
@@ -345,7 +421,6 @@ function Viewtop(drawString, canvas)
             if (!HttpDone(this, "Send events failed"))
                 return;
             mPutsOutstanding--;
-            ProcessEventsXhr();
         });
     }
 
@@ -376,12 +451,12 @@ function Viewtop(drawString, canvas)
             if (!HttpDone(this, "Frame request failed"))
                 return;
             SetRtt(Date.now() - sendTime);
-            LoadImagesThenQueueXhr(JSON.parse(this.responseText), sequence);
+            LoadImagesThenQueue(JSON.parse(this.responseText), sequence);
         });
     }
 
     // Load all the images in parallel, then queue the frame to be drawn in the order received
-    function LoadImagesThenQueueXhr(drawBuffer, sequence)
+    function LoadImagesThenQueue(drawBuffer, sequence)
     {
         var frames = drawBuffer.Frames;
         var totalImagesLoaded = 0;
@@ -397,7 +472,6 @@ function Viewtop(drawString, canvas)
                 {
                     // Queue the image
                     mDrawQueue[sequence] = drawBuffer;
-                    ProcessEventsXhr();
                 }
             });
             image.onerror = function ()
@@ -421,7 +495,6 @@ function Viewtop(drawString, canvas)
         SetClipboard(drawBuffer);
         DrawImages(drawBuffer);
     }
-
 
     var mClipChangedTime = 0;
     function SetClipboard(drawBuffer)

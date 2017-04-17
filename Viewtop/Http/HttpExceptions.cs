@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 namespace Gosub.Http
 {
     /// <summary>
-    /// Throw this exception if there is a problem.  Set terminateConnection to true
-    /// if the persistent TCP connection cannot process another request.
+    /// Throw this exception if there is a problem.  Set keepConnectionOpen to true
+    /// if the persistent TCP connection can process another request.
     /// Server error message text (i.e. 500's) is logged, but not sent
     /// back to the client (only "SERVER ERROR" is displayed)
     /// Client error message text (i.e. 400's) is sent back to the client
@@ -16,13 +16,13 @@ namespace Gosub.Http
     class HttpException : Exception
     {
         public int Code { get; }
-        public bool TerminateConnection { get; }
+        public bool KeepConnectionOpen { get; }
 
-        public HttpException(int code, string message, bool terminateConnection)
+        public HttpException(int code, string message, bool keepConnectionOpen)
             : base(message)
         {
             Code = code;
-            TerminateConnection = terminateConnection;
+            KeepConnectionOpen = keepConnectionOpen;
         }
 
         public HttpException(int code, string message)

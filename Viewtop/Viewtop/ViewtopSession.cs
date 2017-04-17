@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Threading;
 using System.Diagnostics;
 using System.Collections.Specialized;
@@ -12,7 +13,6 @@ using System.IO;
 using System.IO.Compression;
 using Gosub.Http;
 using System.Threading.Tasks;
-using System.Net.WebSockets; // TBD - REMOVE When websockets are implemented
 
 namespace Gosub.Viewtop
 {
@@ -42,6 +42,17 @@ namespace Gosub.Viewtop
         Clip mClip = new Clip();
         ClipInfo mClipInfo = new ClipInfo();
 
+        JsonSerializer mJsonSerializer = new JsonSerializer();
+        MemoryStream mWebsocketRequestStream = new MemoryStream();
+        MemoryStream mWebsocketResponseStream = new MemoryStream();
+        Encoding mUtf8 = new UTF8Encoding(false); // No byte order mark
+
+        class RemoteEvents
+        {
+            public RemoteEvent[] Events { get; set; }
+            public RemoteDrawRequest DrawRequest { get; set; }
+        }
+
         class RemoteEvent
         {
             public string Event { get; set; } = "";
@@ -60,13 +71,19 @@ namespace Gosub.Viewtop
             public bool KeyAlt;
         }
 
-        class RemoteEvents
+        class RemoteDrawRequest
         {
-            public List<RemoteEvent> Events { get; set; } = new List<RemoteEvent>();
+            public long Seq;
+            public int MaxWidth;
+            public int MaxHeight;
+            public string Options = "";
         }
 
         class LoginInfo
         {
+            public string Event = "";
+            public string Message = "";
+
             public string Username = "";
             public string PasswordHash = "";
             public bool LoggedIn;
@@ -75,7 +92,8 @@ namespace Gosub.Viewtop
 
         class FrameInfo
         {
-            // NOTE: Do not change names - they are converted to JSON and sent to client
+            public string Event = "Draw";
+            public long Seq;
             public Stats Stats;
             public List<FrameCompressor.Frame> Frames = new List<FrameCompressor.Frame>();
             public ClipInfo Clip;
@@ -107,40 +125,40 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpConext stream)
+        public void ProcessWebRemoteViewerRequest(HttpContext context)
         {
             LastRequestTime = DateTime.Now;
-            var request = stream.Request;
-            var response = stream.Response;
+            var request = context.Request;
+            var response = context.Response;
             var queryString = request.Query;
 
             var query =  queryString.Get("query");
 
             // Websockets!
-            //if (context.Request.IsWebSocketRequest)
-            //{
-            //    HandleWebSocketRequest(context);
-            //    return;
-            //}
+            if (context.Request.IsWebSocketRequest)
+            {
+                HandleWebSocketRequest(context).Wait();
+                return;
+            }
 
             if (query == "startsession")
             {
                 // Send session id, password salt, and challenge
-                stream.SendResponse(GetChallenge(request.Query.Get("username")), 200);
+                context.SendResponse(GetChallenge(request.Query.Get("username")), 200);
                 return;
             }
 
             if (query == "login")
             {
                 // Authenticate user, sets mAuthenticated to true if they got in
-                stream.SendResponse(Authenticate(request.Query.Get("username"), request.Query.Get("hash")), 200);
+                context.SendResponse(JsonConvert.SerializeObject(Authenticate(request.Query.Get("username"), request.Query.Get("hash"))), 200);
                 return;
             }
 
             // --- Everything below this requires authentication ---
             if (!mAuthenticated)
             {
-                ViewtopServer.SendJsonError(stream, "User must be logged in");
+                ViewtopServer.SendJsonError(context, "User must be logged in");
                 return;
             }
 
@@ -156,134 +174,110 @@ namespace Gosub.Viewtop
             {
                 if (!mClip.EverChanged)
                 {
-                    ViewtopServer.SendJsonError(stream, "Not allowed to access clipboard until data is copied");
+                    ViewtopServer.SendJsonError(context, "Not allowed to access clipboard until data is copied");
                     return;
                 }
-                SendClipData(stream);
+                SendClipData(context);
                 return;
             }
 
             // --- Everything below this requires a sequence number
             if (!long.TryParse(queryString.Get("seq"), out long sequence))
             {
-                ViewtopServer.SendJsonError(stream, "Query must have a sequence number called 'seq', and must it must be numeric");
+                ViewtopServer.SendJsonError(context, "Query must have a sequence number called 'seq', and must it must be numeric");
                 return;
             }
 
             if (query == "draw")
             {
                 UpdateMousePositionFromDrawQuery(request);
-                if (WaitForImageOrTimeout(sequence, out FrameInfo frame, stream.Request.Query))
-                    stream.SendResponse(JsonConvert.SerializeObject(frame), 200);
+                if (WaitForImageOrTimeoutXhr(sequence, out FrameInfo frame, context.Request.Query))
+                    context.SendResponse(JsonConvert.SerializeObject(frame), 200);
                 else
-                    ViewtopServer.SendJsonError(stream, "Error retrieving draw frame " + sequence);
+                    ViewtopServer.SendJsonError(context, "Error retrieving draw frame " + sequence);
                 return;
             }
 
             if (query == "events")
             {
                 int maxLength = 64000;
-                byte[] buffer = stream.ReadContent(maxLength);
-                string json = Encoding.UTF8.GetString(buffer);
-                var events = JsonConvert.DeserializeObject<RemoteEvents>(json);
-
-                foreach (var e in events.Events)
-                {
-                    if (e.Event.StartsWith("mouse") && mCollector != null && mCollector.Scale != 0)
-                        mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, true);
-
-                    switch (e.Event)
-                    {
-                        case "mousedown":
-                            mEvents.MouseButton(MouseAndKeyboard.Action.Down, e.Which);
-                            break;
-                        case "mouseup":
-                            mEvents.MouseButton(MouseAndKeyboard.Action.Up, e.Which);
-                            break;
-                        case "mousewheel":
-                            mEvents.MouseWheel(e.Delta);
-                            break;
-                        case "keydown":
-                            mEvents.KeyPress(MouseAndKeyboard.Action.Down, e.KeyCode, e.KeyShift, e.KeyCtrl, e.KeyAlt);
-                            break;
-                        case "keyup":
-                            mEvents.KeyPress(MouseAndKeyboard.Action.Up, e.KeyCode, e.KeyShift, e.KeyCtrl, e.KeyAlt);
-                            break;
-                    }
-                }
+                string json = mUtf8.GetString(context.ReadContent(maxLength));
+                ProcessRemoteEvents(JsonConvert.DeserializeObject<RemoteEvents>(json).Events);
                 return;
             }
-            ViewtopServer.SendJsonError(stream, "ERROR: Invalid query name - " + query);
+            ViewtopServer.SendJsonError(context, "ERROR: Invalid query name - " + query);
         }
 
-        async void TryHandleWebSocketRequest(HttpListenerContext context)
+        async Task HandleWebSocketRequest(HttpContext context)
         {
-            try
-            {
-                await HandleWebSocketRequest(context);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine("Error handling web socket request: " + ex.Message);
-            }
-        }
+            var websocket = await context.AcceptWebSocketAsync("viewtop");
 
-        async Task HandleWebSocketRequest(HttpListenerContext context)
-        {
-            // I am not sure why these sleeps are needed but it throws an exception
-            // 'System.Net.WebSockets.WebSocketException' in mscorlib.dll
-            // and closes the connection without them.
-            // Seems like the await is returning too soon or something.
-            //
-            // Actually, this doesn't seem to fix it.  Giving up.
-            const int OUCH_TIME = 100;
-
-            var wsContext = await context.AcceptWebSocketAsync("viewtop", new TimeSpan(0, 0, 1));
-            Thread.Sleep(OUCH_TIME); 
-            var ws = wsContext.WebSocket;
-            var buffer = new byte[100000];
-            var bufferSeg = new ArraySegment<byte>(buffer, 0, buffer.Length);
-
-            // Wait for user name and password hash
-            var requestResult = await ws.ReceiveAsync(bufferSeg, CancellationToken.None);
-            Thread.Sleep(OUCH_TIME);
-            if (!requestResult.EndOfMessage)
-                throw new Exception("Authenticate: End of message not received");
-            var login = JsonConvert.DeserializeObject<LoginInfo>(Encoding.UTF8.GetString(buffer, 0, requestResult.Count));
-            Debug.WriteLine("Got authentication message");
+            // Read login (startsession was called via XHR, and now we expect username and password)
+            await websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
+            var login = ReadJson<LoginInfo>(mWebsocketRequestStream);
 
             // Authenticate user and send response, sets mAuthenticated to true if they got in
-            string authenticateResponse = Authenticate(login.Username, login.PasswordHash);
-
+            var authenticateResponse = Authenticate(login.Username, login.PasswordHash);
             if (!mAuthenticated)
             {
                 // End session if not authenticated
-                // TBD: Sometimes the close reason doesn't get sent and there is an exception
-                //      thrown 'System.Net.WebSockets.WebSocketException' in mscorlib.dll
-                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Invalid user name or password", CancellationToken.None);
-                Thread.Sleep(OUCH_TIME);
+                await websocket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "Invalid user name or password", CancellationToken.None);
                 return;
             }
-            Debug.WriteLine("Authenticated");
+            await WriteJson(websocket, authenticateResponse);
 
-            // Send response info and computer name
-            Debug.WriteLine("Sending info");
-            var count = Encoding.UTF8.GetBytes(authenticateResponse, 0, authenticateResponse.Length, buffer, 0);
-            await ws.SendAsync(new ArraySegment<byte>(buffer, 0, count), WebSocketMessageType.Text, true, CancellationToken.None);
-            Thread.Sleep(OUCH_TIME);
+            // Main loop
+            while (websocket.State < WebSocketState.CloseSent)
+            {                
+                // Read request
+                await websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
+                var request = ReadJson<RemoteEvents>(mWebsocketRequestStream);
 
-            while (ws.State != WebSocketState.Closed && ws.State != WebSocketState.CloseReceived)
-            {
-                Debug.WriteLine("Reading info");
+                ProcessRemoteEvents(request.Events);
 
-                // Always get 'System.Net.WebSockets.WebSocketException' in mscorlib.dll here
-                requestResult = await ws.ReceiveAsync(bufferSeg, CancellationToken.None);
-                Thread.Sleep(OUCH_TIME);
+                var draw = request.DrawRequest;
+                if (draw != null)
+                {
+                    // Parse options query string TBD: Change this to JSON
+                    var queryStrings = HttpContext.ParseQueryString(
+                        draw.Options 
+                        + "&maxwidth=" + draw.MaxWidth 
+                        + "&maxheight=" + draw.MaxHeight);
 
-                Debug.WriteLine("Got info: " + Encoding.UTF8.GetString(buffer, 0, requestResult.Count));
+                    var frame = new FrameInfo();
+                    GetFrame(frame, queryStrings);
+                    GetClipInfo(frame);
+                    frame.Seq = draw.Seq; // TBD: Remove, but websocket JS needs this for now
+
+                    await WriteJson(websocket, frame);
+                    await websocket.FlushAsync();
+                }
             }
-            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Done", CancellationToken.None);
         }
+
+        /// <summary>
+        /// Read JSON from a stream
+        /// </summary>
+        T ReadJson<T>(Stream s)
+        {
+            using (var sr = new StreamReader(s, mUtf8, true, 1024, true))
+            using (var jr = new JsonTextReader(sr))
+                return mJsonSerializer.Deserialize<T>(jr);
+        }
+
+        /// <summary>
+        /// Save JSON to a web socket stream, using mWebsocketResponse as a buffer
+        /// </summary>
+        async Task WriteJson(WebSocket websocket, object obj)
+        {
+            mWebsocketResponseStream.Position = 0;
+            mWebsocketResponseStream.SetLength(0);
+            using (var sw = new StreamWriter(mWebsocketResponseStream, mUtf8, 1024, true))
+            using (var jw = new JsonTextWriter(sw))
+                mJsonSerializer.Serialize(jw, obj);
+            await websocket.SendAsync(new ArraySegment<byte>(mWebsocketResponseStream.GetBuffer(), 0, (int)mWebsocketResponseStream.Length), WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+
 
         private string GetChallenge(string userName)
         {
@@ -296,7 +290,7 @@ namespace Gosub.Viewtop
             return challenge;
         }
 
-        private string Authenticate(string username, string passwordHash)
+        private LoginInfo Authenticate(string username, string passwordHash)
         {
             if (username != null && passwordHash != null)
             {
@@ -305,17 +299,20 @@ namespace Gosub.Viewtop
                     mAuthenticated = user.VerifyPassword(mChallenge, passwordHash);
             }
             // Generate response
-            var loginInfo = new LoginInfo();
+            var loginInfo = new LoginInfo();            
             loginInfo.LoggedIn = mAuthenticated;
             if (mAuthenticated)
             {
                 try { loginInfo.ComputerName = Dns.GetHostName(); }
                 catch { }
             }
-            return JsonConvert.SerializeObject(loginInfo);
+            else
+            {
+                loginInfo.Event = "Close";
+                loginInfo.Message = "Invalid user name or password";
+            }
+            return loginInfo;
         }
-
-
 
         void UpdateMousePositionFromDrawQuery(Http.HttpRequest request)
         {
@@ -330,10 +327,45 @@ namespace Gosub.Viewtop
             }
         }
 
+        private void ProcessRemoteEvents(RemoteEvent []events)
+        {
+            if (events == null)
+                return;
+
+            foreach (var e in events)
+            {
+                // Send mouse position, force it to move if there is a click event
+                bool force = e.Event == "mousedown" || e.Event == "mouseup" || e.Event == "mousewheel";
+                if (e.Event.StartsWith("mouse") && mCollector != null && mCollector.Scale != 0)
+                    mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, force);
+
+                switch (e.Event)
+                {
+                    case "mousedown":
+                        mEvents.MouseButton(MouseAndKeyboard.Action.Down, e.Which);
+                        break;
+                    case "mouseup":
+                        mEvents.MouseButton(MouseAndKeyboard.Action.Up, e.Which);
+                        break;
+                    case "mousewheel":
+                        mEvents.MouseWheel(e.Delta);
+                        break;
+                    case "keydown":
+                        mEvents.KeyPress(MouseAndKeyboard.Action.Down, e.KeyCode, e.KeyShift, e.KeyCtrl, e.KeyAlt);
+                        break;
+                    case "keyup":
+                        mEvents.KeyPress(MouseAndKeyboard.Action.Up, e.KeyCode, e.KeyShift, e.KeyCtrl, e.KeyAlt);
+                        break;
+                }
+            }
+        }
+
+
+
         /// <summary>
-        /// Retrieve the requested frame
+        /// Retrieve the requested frame via xhr (i.e. order frames and use cache)
         /// </summary>
-        bool WaitForImageOrTimeout(long sequence, out FrameInfo frame, HttpQuery queryString)
+        bool WaitForImageOrTimeoutXhr(long sequence, out FrameInfo frame, HttpQuery queryString)
         {
             // If a future frame is receivied, wait for it or timeout.
             DateTime now = DateTime.Now;
@@ -535,23 +567,23 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Send the clipboard files, multiple files get zipped
         /// </summary>
-        void SendClipData(HttpConext stream)
+        void SendClipData(HttpContext context)
         {
             if (mClip.ContainsText())
             {
-                stream.SendResponse(mClip.GetText());
+                context.SendResponse(mClip.GetText());
                 return;
             }
             string[] files = mClip.GetFiles();
             if (files.Length == 0)
             {
-                stream.Response.StatusCode = 400;
-                stream.SendResponse(new byte[0]);
+                context.Response.StatusCode = 400;
+                context.SendResponse(new byte[0]);
                 return;
             }
             if (files.Length == 1 && !File.GetAttributes(files[0]).HasFlag(FileAttributes.Directory))
             {
-                stream.SendFile(files[0]);
+                context.SendFile(files[0]);
                 return;
             }
             // Lock here to prevent the browser from being aggressive
@@ -566,7 +598,7 @@ namespace Gosub.Viewtop
                     using (var archive = new ZipArchive(tempStream, ZipArchiveMode.Create))
                         foreach (var file in files)
                             WriteZip(archive, file, Path.GetDirectoryName(file));
-                    stream.SendFile(tempFile);
+                    context.SendFile(tempFile);
                 }
                 finally
                 {

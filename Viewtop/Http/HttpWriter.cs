@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
-
+using System.Threading;
 
 namespace Gosub.Http
 {
@@ -22,7 +22,6 @@ namespace Gosub.Http
             mStream = stream;
         }
 
-
         public override long Length => mLength;
         public override long Position { get => mPosition; set => throw new NotImplementedException(); }
         public override bool CanRead => false;
@@ -35,11 +34,16 @@ namespace Gosub.Http
         public override int WriteTimeout { get => mStream.WriteTimeout; set => mStream.WriteTimeout = value; }
         public override int Read(byte[] buffer, int offset, int count) => throw new NotImplementedException();
         public override int ReadByte() => throw new NotImplementedException();
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => throw new NotImplementedException();
+        public override void WriteByte(byte value) => throw new NotImplementedException();
 
         // Do not allow Close or Dispose (the web server manages the streams)
         public override void Flush() => mStream.Flush();
         public override void Close() => mStream.Flush();
         protected override void Dispose(bool disposing) => mStream.Flush();
+        public override async Task FlushAsync(CancellationToken cancellationToken)
+            => await mStream.FlushAsync();
 
         /// <summary>
         /// Server only
@@ -51,17 +55,17 @@ namespace Gosub.Http
         public override void Write(byte[] buffer, int offset, int count)
         {
             mPosition += count;
-            mStream.Write(buffer, offset, count);
             if (mPosition > mLength)
                 throw new HttpException(500, "Request handler wrote too many bytes");
+            mStream.Write(buffer, offset, count);
         }
 
-        public override void WriteByte(byte value)
+        public async override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            mPosition++;
-            mStream.WriteByte(value);
-            if (mPosition > mLength)
+            mPosition += count;
+            if (mPosition >= mLength)
                 throw new HttpException(500, "Request handler wrote too many bytes");
+            await mStream.WriteAsync(buffer, offset, count, cancellationToken);
         }
 
 

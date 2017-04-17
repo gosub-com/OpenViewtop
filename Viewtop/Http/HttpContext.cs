@@ -6,20 +6,21 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Net.Sockets;
 using System.Net.Security;
+using System.Security.Cryptography;
 
 namespace Gosub.Http
 {
-    public class HttpConext
+    public class HttpContext
     {
         const int HTTP_HEADER_MAX_SIZE = 16000;
+        const string CRLF = "\r\n";
 
-        HttpRequest mRequest;
-        HttpResponse mResponse;
+        TcpClient mTcpClient;
         HttpReader mReader;
         HttpWriter mWriter;
+        HttpRequest mRequest;
+        HttpResponse mResponse;
         bool mHeaderSent;
-
-        Encoding mUtf8NoBom = new UTF8Encoding(false); // Necessary because Encoding.UTF8 writes BOM
 
         static Dictionary<string, bool> mMethods = new Dictionary<string, bool>()
         {
@@ -36,8 +37,9 @@ namespace Gosub.Http
         /// <summary>
         /// Created only by the HttpServer
         /// </summary>
-        internal HttpConext(HttpReader reader, HttpWriter writer)
+        internal HttpContext(TcpClient client, HttpReader reader, HttpWriter writer)
         {
+            mTcpClient = client;
             mReader = reader;
             mWriter = writer;
         }
@@ -52,10 +54,13 @@ namespace Gosub.Http
         /// </summary>
         public HttpReader GetReader()
         {
+            if (mRequest.IsWebSocketRequest)
+                throw new HttpException(500, "GetWriter: Not allowed to get an http reader on a websocket connection");
+
             if (!mHeaderSent)
             {
                 mResponse.ContentLength = Math.Max(0, mResponse.ContentLength);
-                SendHeader();
+                SendHttpHeader();
             }
             return mReader;
         }
@@ -66,24 +71,27 @@ namespace Gosub.Http
         /// </summary>
         public HttpWriter GetWriter(long contentLength)
         {
+            if (mRequest.IsWebSocketRequest)
+                throw new HttpException(500, "GetWriter: Not allowed to get an http writer on a websocket connection");
+
             if (!mHeaderSent)
             {
                 if (contentLength < 0)
-                    throw new HttpException(500, "GetWriter: ContentLength must be >= zero", true);
+                    throw new HttpException(500, "GetWriter: ContentLength must be >= zero");
                 mResponse.ContentLength = contentLength;
-                SendHeader();
+                SendHttpHeader();
             }
             if (contentLength !=  mResponse.ContentLength)
                 throw new HttpException(500, "GetWriter: ContentLength cannot be changed once it is set");
             return mWriter;
         }
-
+           
         /// <summary>
         /// Called only by HttpServer
         /// Read and parse the HTTP header, return true if everything worked.
         /// Returns false at EOF and throws an exception on error.
         /// </summary>
-        internal bool ReadHeader()
+        internal bool ReadHttpHeader()
         {
             mRequest = new HttpRequest();
             mResponse = new HttpResponse();
@@ -107,12 +115,12 @@ namespace Gosub.Http
 
             var headerParts = ((char)ch + ReadLine()).Split(' ');
             if (headerParts.Length != 3)
-                throw new HttpException(400, "Invalid request line: Needs 3 parts separated by space", true);
+                throw new HttpException(400, "Invalid request line: Needs 3 parts separated by space");
 
             // Parse method
             mRequest.HttpMethod = headerParts[0];
             if (!mMethods.ContainsKey(mRequest.HttpMethod))
-                throw new HttpException(400, "Invalid request line: unknown method", true);
+                throw new HttpException(400, "Invalid request line: unknown method");
 
             // Parse URL Fragment
             var target = headerParts[1];
@@ -124,38 +132,33 @@ namespace Gosub.Http
                 target = target.Substring(0, fragmentIndex);
             }
             // Parse URL query string
-            var queryStrings = new HttpQuery();
             int queryIndex = target.IndexOf('?');
             if (queryIndex >= 0)
             {
                 var query = target.Substring(queryIndex + 1);
                 mRequest.QueryFull = query;
                 target = target.Substring(0, queryIndex);
-                foreach (var q in query.Split('&'))
-                {
-                    int keyIndex = q.IndexOf('=');
-                    if (keyIndex >= 0)
-                        queryStrings[q.Substring(0, keyIndex)] = q.Substring(keyIndex + 1);
-                    else if (q != "")
-                        queryStrings[q] = "";
-                }
+                mRequest.Query = ParseQueryString(query);
             }
-            mRequest.Query = queryStrings;
+            else
+            {
+                mRequest.Query = new HttpQuery();
+            }
             mRequest.Target = target;
 
             // Parse protocol and version
             var protocolParts = headerParts[2].Split('/');
             if (protocolParts.Length != 2 || protocolParts[0].ToUpper() != "HTTP")
-                throw new HttpException(400, "Invalid request line: Unrecognized protocol.  Only HTTP is supported", true);
+                throw new HttpException(400, "Invalid request line: Unrecognized protocol.  Only HTTP is supported");
 
             var versionParts = protocolParts[1].Split('.');
             if (versionParts.Length != 2
                     || !int.TryParse(versionParts[0], out mRequest.ProtocolVersionMajor)
                     || !int.TryParse(versionParts[1], out mRequest.ProtocolVersionMinor))
-                throw new HttpException(400, "Invalid request line: Protocol version format is incorrect (require #.#)", true);
+                throw new HttpException(400, "Invalid request line: Protocol version format is incorrect (require #.#)");
 
             if (mRequest.ProtocolVersionMajor != 1)
-                throw new HttpException(400, "Expecting HTTP version 1.#", true);
+                throw new HttpException(400, "Expecting HTTP version 1.#");
 
             // Read header fields
             var headers = new HttpQuery();
@@ -164,12 +167,12 @@ namespace Gosub.Http
             {
                 int index;
                 if ((index = fieldLine.IndexOf(':')) < 0)
-                    throw new HttpException(400, "Invalid header field: Missing ':'", true);
+                    throw new HttpException(400, "Invalid header field: Missing ':'");
 
                 var key = fieldLine.Substring(0, index).Trim().ToLower();
                 var value = fieldLine.Substring(index + 1).Trim();
                 if (key == "" || value == "")
-                    throw new HttpException(400, "Invalid header field: Missing key or value", true);
+                    throw new HttpException(400, "Invalid header field: Missing key or value");
 
                 headers[key] = value;
             }
@@ -180,12 +183,31 @@ namespace Gosub.Http
             mRequest.ContentLength = -1; // Default if not sent
             if (long.TryParse(headers.Get("content-length"), out long contentLength))
                 mRequest.ContentLength = contentLength;
-            bool keepAlive = mRequest.ProtocolVersionMinor >= 1 && mRequest.Headers.Get("connection").ToLower() != "close"
-                || mRequest.Headers.Get("connection").ToLower() == "keep-alive";
-            mRequest.KeepAlive = keepAlive;
-            mResponse.KeepAlive = keepAlive;
+
+            // Websocket connection?  RFC 6455, 4.2.1
+            if (headers.Get("connection").ToLower() == "upgrade" && headers.Get("upgrade").ToLower() == "websocket")
+            {
+                int.TryParse(headers.Get("sec-websocket-version"), out int webSocketVersion);
+                if (webSocketVersion < 13)
+                    throw new HttpException(400, "Web socket request version must be >= 13");
+                mRequest.IsWebSocketRequest = true;
+            }
 
             return true;
+        }
+
+        public static HttpQuery ParseQueryString(string query)
+        {
+            var queryStrings = new HttpQuery();
+            foreach (var q in query.Split('&'))
+            {
+                int keyIndex = q.IndexOf('=');
+                if (keyIndex >= 0)
+                    queryStrings[q.Substring(0, keyIndex)] = q.Substring(keyIndex + 1);
+                else if (q != "")
+                    queryStrings[q] = "";
+            }
+            return queryStrings;
         }
 
         /// <summary>
@@ -199,14 +221,14 @@ namespace Gosub.Http
             while (ch != '\r')
             {
                 if (ch < 0)
-                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <EOF>", true);
+                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <EOF>");
                 if (ch == '\n')
-                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <LF>", true);
+                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <LF>");
                 sb.Append((char)ch);
                 ch = mReader.ReadByte();
             }
             if ((ch = mReader.ReadByte()) != '\n')
-                throw new HttpException(400, "ReadHeaderLine: Expecting <LF>, but found value char value " + ch, true);
+                throw new HttpException(400, "ReadHeaderLine: Expecting <LF>, but found value char value " + ch);
 
             return sb.ToString();
         }
@@ -215,14 +237,21 @@ namespace Gosub.Http
         /// <summary>
         /// Send the response header before the stream is read or written
         /// </summary>
-        void SendHeader()
+        void SendHttpHeader()
         {
             if (mHeaderSent)
-                throw new HttpException(500, "SendHeader: Not allowed to send header twice", true);
+                throw new HttpException(500, "SendHttpHeader: Http header already sent");
             if (mResponse.ContentLength < 0)
-                throw new HttpException(500, "SendHeader: ConentLength must be set before sending header", true);
+                throw new HttpException(500, "SendHttpHeader: ConentLength must be set before sending header");
+            if (mRequest.IsWebSocketRequest)
+                throw new HttpException(500, "SendHttpHeader: Not allowed to send http header on websocket connection");
 
-            // Freeze response header and setup to write header
+            // Keep alive
+            var connection = mRequest.Headers.Get("connection").ToLower();
+            bool keepAlive = connection == "keep-alive" || mRequest.ProtocolVersionMinor >= 1 && connection != "close";
+            Response.KeepAlive = keepAlive;
+
+            // Freeze http response header and setup send
             mHeaderSent = true;
             mResponse.HeaderSent = true;
             mWriter.PositionInternal = 0;
@@ -234,15 +263,13 @@ namespace Gosub.Http
                 statusMessage = "?";
 
             // Send header
-            var sw = new StreamWriter(mWriter, mUtf8NoBom, 1024, true);
-            sw.WriteLine("HTTP/1.1 " + mResponse.StatusCode + " " + statusMessage);
-            sw.WriteLine("Content-Length:" + mResponse.ContentLength);
-            if (!Response.KeepAlive)
-                sw.WriteLine("Connection:close");
-            if (Response.KeepAlive && Request.ProtocolVersionMinor == 0)
-                sw.WriteLine("Connection:keep-alive");
-            sw.WriteLine("");
-            sw.Dispose();
+            string header = "HTTP/1.1 " + mResponse.StatusCode + " " + statusMessage + CRLF
+                            + "Content-Length:" + mResponse.ContentLength + CRLF
+                            + "Connection:" + (keepAlive ? "keep-alive" : "close") + CRLF
+                            + (mResponse.ContentType == "" ? "" : "Content-Type:" + mResponse.ContentType + CRLF)
+                            + CRLF;
+            var headerBytes = Encoding.UTF8.GetBytes(header);
+            mWriter.Write(headerBytes, 0, headerBytes.Length);
 
             // Good to go, reset streams
             mReader.PositionInternal = 0;
@@ -259,7 +286,7 @@ namespace Gosub.Http
 
         public void SendResponse(string message)
         {
-            SendResponse(mUtf8NoBom.GetBytes(message));
+            SendResponse(Encoding.UTF8.GetBytes(message));
         }
 
         public void SendResponse(string message, int statusCode)
@@ -270,20 +297,20 @@ namespace Gosub.Http
 
         public void SendFile(string path)
         {
-            var stream = File.OpenRead(path);
-            stream.CopyTo(GetWriter(stream.Length));
-            stream.Close();
+            if (!File.Exists(path))
+                throw new HttpException(404, "File not found", true);
+            using (var stream = File.OpenRead(path))
+                stream.CopyTo(GetWriter(stream.Length));
         }
 
         public byte[] ReadContent(int maxLength)
         {
             // Currently we require the sender to include 'Content-Length.
-            // TBD: Fix this since it is not required by the HTTP protocol,
-            //      we get away with it because major browsers always include it
+            // TBD: Fix this since it is not required by the HTTP protocol
             if (mRequest.ContentLength < 0)
-                throw new HttpException(411, "Error: HTTP header did not contain 'Content-Length' which is currently required", true);
+                throw new HttpException(411, "HTTP header did not contain 'Content-Length' which is required");
             if (mRequest.ContentLength > maxLength)
-                throw new HttpException(413, "Error: Content length is too large", true);
+                throw new HttpException(413, "Content length is too large");
 
             // Read specific number of bytes (TBD: Enforce timeout)
             var stream = GetReader();
@@ -293,6 +320,50 @@ namespace Gosub.Http
                 index += stream.Read(buffer, index, buffer.Length - index);
             return buffer;
         }
+
+        /// <summary>
+        /// Throw exception if this isn't the correct protocol
+        /// </summary>
+        public async Task<WebSocket> AcceptWebSocketAsync(string protocol)
+        {
+            if (mResponse.HeaderSent)
+                throw new HttpException(500, "AcceptWebSocketAsync: Cannot accept websocket connection after http header was already sent");
+            if (!mRequest.IsWebSocketRequest)
+                throw new HttpException(500, "AcceptWebSocketAsync: Not allowed to accept a non-web socket request");
+
+            // Freeze http response header and setup send
+            mTcpClient.NoDelay = true;
+            mHeaderSent = true;
+            mResponse.HeaderSent = true;
+            mWriter.PositionInternal = 0;
+            mWriter.LengthInternal = long.MaxValue;
+            mReader.LengthInternal = long.MaxValue;
+
+            // RFC 6455, 4.2.1 and 4.2.2
+            string requestProtocol = mRequest.Headers.Get("sec-websocket-protocol");
+            if (requestProtocol != protocol.ToLower()) // TBD: Split comma delimited string
+                throw new HttpException(400, "Invalid websocket protocol requested: " + requestProtocol, true);
+
+            string key = mRequest.Headers.Get("sec-websocket-key");
+            if (key == "")
+                throw new HttpException(400, "Websocket key not sent by client");
+            string keyHash;
+            using (var sha = SHA1.Create())
+                keyHash = Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+
+            // Send header
+            string header = "HTTP/1.1 101 Switching Protocols" + CRLF
+                            + "Connection: Upgrade" + CRLF
+                            + "Upgrade: websocket" + CRLF
+                            + "Sec-WebSocket-Accept: " + keyHash + CRLF
+                            + "Sec-WebSocket-Protocol: " + requestProtocol + CRLF
+                            + CRLF;
+            var headerBytes = Encoding.UTF8.GetBytes(header);
+            await mWriter.WriteAsync(headerBytes, 0, headerBytes.Length);
+
+            return new WebSocket(this, mReader, mWriter);
+        }
+
 
     }
 }

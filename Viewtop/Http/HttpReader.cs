@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
+using System.Threading;
 
 namespace Gosub.Http
 {
@@ -33,6 +34,8 @@ namespace Gosub.Http
         public override int WriteTimeout { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
         public override void Write(byte[] buffer, int offset, int count) => throw new NotImplementedException();
         public override void WriteByte(byte value) => throw new NotImplementedException();
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => throw new NotImplementedException();
 
         // Do not allow Close or Dispose (the web server manages the streams)
         public override void Flush() => mStream.Flush();
@@ -64,6 +67,32 @@ namespace Gosub.Http
             if (b >= 0)
                 mPosition++;
             return b;
+        }
+
+        public async override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            // Limit number of bytes to read
+            count = (int)Math.Min(mLength - mPosition, count);
+            int length = await mStream.ReadAsync(buffer, offset, count, cancellationToken);
+            mPosition += length;
+            return length;
+        }
+
+        /// <summary>
+        /// Fill a buffer with the requested number of bytes, do not return 
+        /// until they are all there or a timeout exception is thrown
+        /// </summary>
+        public async Task<int> ReadAllAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
+        {
+            int offset = 0;
+            while (offset < buffer.Count)
+            {
+                var length = await ReadAsync(buffer.Array, buffer.Offset + offset, buffer.Count - offset);
+                if (length == 0)
+                    throw new HttpException(400, "Unexpected end of stream");
+                offset += length;
+            }
+            return offset;
         }
 
 

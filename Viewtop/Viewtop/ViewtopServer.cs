@@ -20,13 +20,25 @@ namespace Gosub.Viewtop
 
         Dictionary<long, ViewtopSession> mSessions = new Dictionary<long, ViewtopSession>();
 
+        Dictionary<string, string> mMimeTypes = new Dictionary<string, string>()
+        {
+            {".htm", "text/html" },
+            {".html", "text/html" },
+            {".jpg", "image/jpeg" },
+            {".jpeg", "image/jpeg" },
+            {".png", "image/png" },
+            {".gif", "image/gif" },
+            {".css", "text/css" },
+            {".js", "application/javascript" }
+        };
+
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpConext stream)
+        public void ProcessWebRemoteViewerRequest(HttpContext context)
         {
-            var request = stream.Request;
-            var response = stream.Response;
+            var request = context.Request;
+            var response = context.Response;
 
             // Convert path to Windows, strip leading "\", and choose "index" if no name is given
             string path = request.Target.Replace('/', Path.DirectorySeparatorChar);
@@ -41,23 +53,25 @@ namespace Gosub.Viewtop
             // Never serve files outside of the public subdirectory, or that begin with a "."
             path = Path.Combine(publicSubdirectory, path);
             if (path.Contains("..") || path.Contains(hiddenFileName))
-                throw new HttpException(400, "Invalid Request: File name is invalid");
+                throw new HttpException(400, "Invalid Request: File name is invalid", true);
 
             // Serve static pages unless
-            if (Path.GetExtension(path).ToLower() != ".ovt")
+            var extension = Path.GetExtension(path).ToLower();
+            if (extension != ".ovt")
             {
                 // Static files can only be a GET request
                 if (request.HttpMethod != "GET")
                     throw new Exception("Invalid HTTP request: Only GET method is allowed for serving ");
-                if (!File.Exists(path))
-                    throw new HttpException(404, "File not found");
-                stream.SendFile(path);
+
+                if (mMimeTypes.TryGetValue(extension, out string contentType))
+                    response.ContentType = contentType;
+                context.SendFile(path);
                 return;
             }
 
             if (!request.Query.TryGetValue("query", out string query))
             {
-                SendJsonError(stream, "Query must include 'query' parameter");
+                SendJsonError(context, "Query must include 'query' parameter");
                 return;
             }
 
@@ -74,13 +88,13 @@ namespace Gosub.Viewtop
                     newSession = new ViewtopSession(sessionId);
                     mSessions[sessionId] = newSession;
                 }
-                newSession.ProcessWebRemoteViewerRequest(stream);
+                newSession.ProcessWebRemoteViewerRequest(context);
                 return;
             }
 
             if (!long.TryParse(request.Query.Get("sid"), out long sid))
             {
-                SendJsonError(stream, "Query must include 'sid'");
+                SendJsonError(context, "Query must include 'sid'");
                 return;
             }
             ViewtopSession session;
@@ -88,11 +102,11 @@ namespace Gosub.Viewtop
             {
                 if (!mSessions.TryGetValue(sid, out session))
                 {
-                    SendJsonError(stream, "Unknown 'sid'");
+                    SendJsonError(context, "Unknown 'sid'");
                     return;
                 }
             }
-            session.ProcessWebRemoteViewerRequest(stream);
+            session.ProcessWebRemoteViewerRequest(context);
         }
 
         private void PurgeInactiveSessions()
@@ -112,9 +126,9 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Error messages from the viewtop server are in JSON with code 200
         /// </summary>
-        public static void SendJsonError(HttpConext stream, string message)
+        public static void SendJsonError(HttpContext context, string message)
         {
-            stream.SendResponse(@"{""FAIL"":""" +
+            context.SendResponse(@"{""FAIL"":""" +
                 message.Replace("\"", "\\\"").Replace("\\", "\\\\")
                 + @"""}", 400);
         }
