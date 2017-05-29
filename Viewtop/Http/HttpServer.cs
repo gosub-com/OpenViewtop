@@ -19,12 +19,17 @@ namespace Gosub.Http
     /// </summary>
     public class HttpServer
     {
-        public delegate void HttpHandler(HttpContext HttpStream);
+        public delegate Task HttpHandler(HttpContext HttpStream);
 
         object mLock = new object();
         TcpListener mListener;
         HttpHandler mHttpHandler;
         X509Certificate mCertificate;
+
+        CancellationToken mCancellationToken = CancellationToken.None; // TBD: Implement cancellation token
+        int mConcurrentRequests;
+        int mMaxConcurrentRequests;
+
 
         public HttpServer()
         {
@@ -32,6 +37,12 @@ namespace Gosub.Http
 
         public int HeaderTimeout { get; set; } = 10000;
         public int BodyTimeout { get; set; } = 60000;
+
+        /// <summary>
+        /// When true, the server uses a synchrounous threading model.  
+        /// This decreases latency at the expense of needing more CPU.
+        /// </summary>
+        public bool Sync { get; set; }
 
         /// <summary>
         /// Call this with a certificate to use SSL, or with NULL to disable SSL
@@ -42,8 +53,7 @@ namespace Gosub.Http
         }
 
         /// <summary>
-        /// Start server in background thread.  The http handler is called in a background thread
-        /// whenever a new request comes in.
+        /// Start server in background thread.  
         /// </summary>
         public void Start(TcpListener listener, HttpHandler httpHandler)
         {
@@ -51,16 +61,16 @@ namespace Gosub.Http
             mListener = listener;
             mListener.Start();
 
-            // Process incoming connections in background thread
-            ThreadPool.QueueUserWorkItem((obj) =>
+            // Process incoming connections in background thread 
+            // since we don't want it running on the GUI thread
+            Task.Run( async () =>
             {
                 try
                 {
                     while (true)
                     {
-                        // Wait for request
-                        var client = mListener.AcceptTcpClient();
-                        ThreadPool.QueueUserWorkItem((obj2) => { TryProcessRequests(client); });
+                        var client = await mListener.AcceptTcpClientAsync();
+                        ThreadPool.QueueUserWorkItem(delegate { TryProcessRequestsAsync(client); });
                     }
                 }
                 catch (Exception ex)
@@ -75,34 +85,37 @@ namespace Gosub.Http
             mListener.Stop();
         }
 
-        // Each request comes in on a new thread
-        void TryProcessRequests(TcpClient client)
+        async void TryProcessRequestsAsync(TcpClient client)
         {
+            int concurrentRequests = Interlocked.Add(ref mConcurrentRequests, 1);
+            Thread.VolatileWrite(ref mMaxConcurrentRequests, Math.Max(concurrentRequests, Thread.VolatileRead(ref mMaxConcurrentRequests)));            
+
             using (client)
             {
                 HttpContext context = null;
                 try
                 {
                     // Setup stream or SSL stream
+                    client.NoDelay = true;
                     var tcpStream = (Stream)client.GetStream();
                     if (mCertificate != null)
                     {
                         // Wrap stream in an SSL stream, and authenticate
                         var sslStream = new SslStream(tcpStream, false);
-                        sslStream.AuthenticateAsServer(mCertificate);
+                        await sslStream.AuthenticateAsServerAsync(mCertificate);
                         tcpStream = sslStream;
                     }
                     // Process requests on this possibly persistent TCP stream
-                    var reader = new HttpReader(tcpStream);
-                    var writer = new HttpWriter(tcpStream);
+                    var reader = new HttpReader(tcpStream, mCancellationToken, Sync);
+                    var writer = new HttpWriter(tcpStream, mCancellationToken, Sync);
                     context = new HttpContext(client, reader, writer);
-                    ProcessRequests(context, reader, writer);
+                    await ProcessRequests(context, reader, writer).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
                     try
                     {
-                        ProcessException(context, ex);
+                        await ProcessExceptionAsync(context, ex);
                     }
                     catch (Exception doubleFaultEx)
                     {
@@ -110,12 +123,13 @@ namespace Gosub.Http
                     }
                 }
             }
+            Interlocked.Add(ref mConcurrentRequests, -1);
         }
 
         /// <summary>
         /// Process requests as long as there is not an error
         /// </summary>
-        private void ProcessRequests(HttpContext context, HttpReader reader, HttpWriter writer)
+        async Task ProcessRequests(HttpContext context, HttpReader reader, HttpWriter writer)
         {
             int persistentConnections = 0;
             do
@@ -124,8 +138,10 @@ namespace Gosub.Http
 
                 // Read header
                 reader.ReadTimeout = HeaderTimeout;
-                if (!context.ReadHttpHeader())
+                if (!await context.ReadHttpHeaderAsync().ConfigureAwait(false))
+                {
                     return; // EOF
+                }
 
                 // Handle body
                 reader.ReadTimeout = HeaderTimeout;
@@ -135,12 +151,12 @@ namespace Gosub.Http
                     // Process request
                     if (mHttpHandler == null)
                         throw new HttpException(503, "HTTP request handler not installed");
-                    mHttpHandler(context);
+                    await mHttpHandler(context).ConfigureAwait(false);
                 }
                 catch (HttpException ex) when (ex.KeepConnectionOpen && !context.Response.HeaderSent)
                 {
-                    // Keep the persisten connection open only if it's OK to do so.
-                    ProcessException(context, ex);
+                    // Keep the persistent connection open only if it's OK to do so.
+                    await ProcessExceptionAsync(context, ex);
                 }
 
                 // Any of these problems will terminate a persistent connection
@@ -153,15 +169,11 @@ namespace Gosub.Http
                     throw new HttpException(500, "Request handler did not read correct number of bytes: " + request.TargetFull);
                 if (!websocket && writer.Position != response.ContentLength)
                     throw new HttpException(500, "Request handler did not write correct number of bytes: " + request.TargetFull);
-
-                // TBD: Convert web server to be fully async.
-                writer.FlushAsync();
-
             } while (!context.Request.IsWebSocketRequest && context.Response.KeepAlive);
         }
 
         // Try to send an error message back to the client
-        void ProcessException(HttpContext context, Exception ex)
+        async Task ProcessExceptionAsync(HttpContext context, Exception ex)
         {
             // Unwrap aggregate exceptions.  Async likes to throw these.
             var aggEx = ex as AggregateException;
@@ -201,7 +213,7 @@ namespace Gosub.Http
             {
                 context.Response.StatusCode = code;
                 context.Response.StatusMessage = message;
-                context.SendResponse(ex.Message);
+                await context.SendResponseAsync(ex.Message);
             }
         }
     }

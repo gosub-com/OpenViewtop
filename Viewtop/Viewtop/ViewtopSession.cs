@@ -125,7 +125,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpContext context)
+        public async Task ProcessWebRemoteViewerRequestAsync(HttpContext context)
         {
             LastRequestTime = DateTime.Now;
             var request = context.Request;
@@ -137,28 +137,28 @@ namespace Gosub.Viewtop
             // Websockets!
             if (context.Request.IsWebSocketRequest)
             {
-                HandleWebSocketRequest(context).Wait();
+                await HandleWebSocketRequest(context);
                 return;
             }
 
             if (query == "startsession")
             {
                 // Send session id, password salt, and challenge
-                context.SendResponse(GetChallenge(request.Query.Get("username")), 200);
+                await context.SendResponseAsync(GetChallenge(request.Query.Get("username")), 200);
                 return;
             }
 
             if (query == "login")
             {
                 // Authenticate user, sets mAuthenticated to true if they got in
-                context.SendResponse(JsonConvert.SerializeObject(Authenticate(request.Query.Get("username"), request.Query.Get("hash"))), 200);
+                await context.SendResponseAsync(JsonConvert.SerializeObject(Authenticate(request.Query.Get("username"), request.Query.Get("hash"))), 200);
                 return;
             }
 
             // --- Everything below this requires authentication ---
             if (!mAuthenticated)
             {
-                ViewtopServer.SendJsonError(context, "User must be logged in");
+                await ViewtopServer.SendJsonErrorAsync(context, "User must be logged in");
                 return;
             }
 
@@ -174,17 +174,17 @@ namespace Gosub.Viewtop
             {
                 if (!mClip.EverChanged)
                 {
-                    ViewtopServer.SendJsonError(context, "Not allowed to access clipboard until data is copied");
+                    await ViewtopServer.SendJsonErrorAsync(context, "Not allowed to access clipboard until data is copied");
                     return;
                 }
-                SendClipData(context);
+                await SendClipDataAsync(context);
                 return;
             }
 
             // --- Everything below this requires a sequence number
             if (!long.TryParse(queryString.Get("seq"), out long sequence))
             {
-                ViewtopServer.SendJsonError(context, "Query must have a sequence number called 'seq', and must it must be numeric");
+                await ViewtopServer.SendJsonErrorAsync(context, "Query must have a sequence number called 'seq', and must it must be numeric");
                 return;
             }
 
@@ -192,20 +192,20 @@ namespace Gosub.Viewtop
             {
                 UpdateMousePositionFromDrawQuery(request);
                 if (WaitForImageOrTimeoutXhr(sequence, out FrameInfo frame, context.Request.Query))
-                    context.SendResponse(JsonConvert.SerializeObject(frame), 200);
+                    await context.SendResponseAsync(JsonConvert.SerializeObject(frame), 200);
                 else
-                    ViewtopServer.SendJsonError(context, "Error retrieving draw frame " + sequence);
+                    await ViewtopServer.SendJsonErrorAsync(context, "Error retrieving draw frame " + sequence);
                 return;
             }
 
             if (query == "events")
             {
                 int maxLength = 64000;
-                string json = mUtf8.GetString(context.ReadContent(maxLength));
+                string json = mUtf8.GetString(await context.ReadContentAsync(maxLength));
                 ProcessRemoteEvents(JsonConvert.DeserializeObject<RemoteEvents>(json).Events);
                 return;
             }
-            ViewtopServer.SendJsonError(context, "ERROR: Invalid query name - " + query);
+            await ViewtopServer.SendJsonErrorAsync(context, "ERROR: Invalid query name - " + query);
         }
 
         async Task HandleWebSocketRequest(HttpContext context)
@@ -250,7 +250,6 @@ namespace Gosub.Viewtop
                     frame.Seq = draw.Seq; // TBD: Remove, but websocket JS needs this for now
 
                     await WriteJson(websocket, frame);
-                    await websocket.FlushAsync();
                 }
             }
         }
@@ -567,43 +566,46 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Send the clipboard files, multiple files get zipped
         /// </summary>
-        void SendClipData(HttpContext context)
+        async Task SendClipDataAsync(HttpContext context)
         {
             if (mClip.ContainsText())
             {
-                context.SendResponse(mClip.GetText());
+                await context.SendResponseAsync(mClip.GetText());
                 return;
             }
             string[] files = mClip.GetFiles();
             if (files.Length == 0)
             {
                 context.Response.StatusCode = 400;
-                context.SendResponse(new byte[0]);
+                await context.SendResponseAsync(new byte[0]);
                 return;
             }
             if (files.Length == 1 && !File.GetAttributes(files[0]).HasFlag(FileAttributes.Directory))
             {
-                context.SendFile(files[0]);
+                await context.SendFileAsync(files[0]);
                 return;
             }
-            // Lock here to prevent the browser from being aggressive
-            // and trying to download multiple copies at the same time
-            lock (mLockZip)
+            // Create a ZIP file
+            var tempFile = Path.GetTempFileName();
+            try
             {
-                // Create a ZIP file
-                var tempFile = Path.GetTempFileName();
-                try
+                // Lock here to prevent the browser from being aggressive
+                // and trying to download multiple copies at the same time.
+                // TBD: Implement caching system so repeated requests get same file.
+                // TBD: Should this be run on the thread pool?
+                lock (mLockZip)
                 {
                     using (var tempStream = File.OpenWrite(tempFile))
                     using (var archive = new ZipArchive(tempStream, ZipArchiveMode.Create))
                         foreach (var file in files)
                             WriteZip(archive, file, Path.GetDirectoryName(file));
-                    context.SendFile(tempFile);
                 }
-                finally
-                {
-                    File.Delete(tempFile);
-                }
+
+                await context.SendFileAsync(tempFile);
+            }
+            finally
+            {
+                File.Delete(tempFile);
             }
         }
 

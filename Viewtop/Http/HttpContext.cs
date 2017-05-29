@@ -7,6 +7,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Net.Security;
 using System.Security.Cryptography;
+using System.Threading;
 
 namespace Gosub.Http
 {
@@ -52,7 +53,7 @@ namespace Gosub.Http
         /// The response header may not be modified after calling this function.
         /// NOTE: If you have not set Response.ContentLength, this will set it to zero
         /// </summary>
-        public HttpReader GetReader()
+        public async Task<HttpReader> GetReaderAsync()
         {
             if (mRequest.IsWebSocketRequest)
                 throw new HttpException(500, "GetWriter: Not allowed to get an http reader on a websocket connection");
@@ -60,7 +61,7 @@ namespace Gosub.Http
             if (!mHeaderSent)
             {
                 mResponse.ContentLength = Math.Max(0, mResponse.ContentLength);
-                SendHttpHeader();
+                await SendHttpHeaderAsync();
             }
             return mReader;
         }
@@ -69,7 +70,7 @@ namespace Gosub.Http
         /// Write the HTTP response header and return the output stream.
         /// The response may not be modified after calling this function.
         /// </summary>
-        public HttpWriter GetWriter(long contentLength)
+        public async Task<HttpWriter> GetWriterAsync(long contentLength)
         {
             if (mRequest.IsWebSocketRequest)
                 throw new HttpException(500, "GetWriter: Not allowed to get an http writer on a websocket connection");
@@ -79,7 +80,7 @@ namespace Gosub.Http
                 if (contentLength < 0)
                     throw new HttpException(500, "GetWriter: ContentLength must be >= zero");
                 mResponse.ContentLength = contentLength;
-                SendHttpHeader();
+                await SendHttpHeaderAsync();
             }
             if (contentLength !=  mResponse.ContentLength)
                 throw new HttpException(500, "GetWriter: ContentLength cannot be changed once it is set");
@@ -91,7 +92,7 @@ namespace Gosub.Http
         /// Read and parse the HTTP header, return true if everything worked.
         /// Returns false at EOF and throws an exception on error.
         /// </summary>
-        internal bool ReadHttpHeader()
+        async internal Task<bool> ReadHttpHeaderAsync()
         {
             mRequest = new HttpRequest();
             mResponse = new HttpResponse();
@@ -100,20 +101,12 @@ namespace Gosub.Http
             mReader.PositionInternal = 0;
             mReader.LengthInternal = HTTP_HEADER_MAX_SIZE;
 
-            // Check for end of stream (TBD: Improve this)            
-            int ch;
-            try
-            {
-                ch = mReader.ReadByte();
-                if (ch < 0)
-                    return false;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
+            var buffer = await mReader.ReadHttpHeaderAsyncInternal();
+            var header = Encoding.UTF8.GetString(buffer.Array, buffer.Offset, buffer.Count).Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
+            if (header.Length == 0)
+                throw new HttpException(400, "Invalid request: Empty");
 
-            var headerParts = ((char)ch + ReadLine()).Split(' ');
+            var headerParts = header[0].Split(' ');
             if (headerParts.Length != 3)
                 throw new HttpException(400, "Invalid request line: Needs 3 parts separated by space");
 
@@ -162,9 +155,10 @@ namespace Gosub.Http
 
             // Read header fields
             var headers = new HttpQuery();
-            string fieldLine;
-            while ((fieldLine = ReadLine()) != "")
+            for (int lineIndex = 1; lineIndex < header.Length; lineIndex++)
             {
+                var fieldLine = header[lineIndex];
+
                 int index;
                 if ((index = fieldLine.IndexOf(':')) < 0)
                     throw new HttpException(400, "Invalid header field: Missing ':'");
@@ -192,7 +186,6 @@ namespace Gosub.Http
                     throw new HttpException(400, "Web socket request version must be >= 13");
                 mRequest.IsWebSocketRequest = true;
             }
-
             return true;
         }
 
@@ -210,34 +203,11 @@ namespace Gosub.Http
             return queryStrings;
         }
 
-        /// <summary>
-        /// Read until there is a <CR><LF> as defined in RFC 7230.
-        /// </summary>
-        string ReadLine()
-        {
-            // NOTE: Improve performance using block reads to a buffer when we get a chance
-            StringBuilder sb = new StringBuilder();
-            int ch = mReader.ReadByte();
-            while (ch != '\r')
-            {
-                if (ch < 0)
-                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <EOF>");
-                if (ch == '\n')
-                    throw new HttpException(400, "ReadHeaderLine: Expecting <CR>, found <LF>");
-                sb.Append((char)ch);
-                ch = mReader.ReadByte();
-            }
-            if ((ch = mReader.ReadByte()) != '\n')
-                throw new HttpException(400, "ReadHeaderLine: Expecting <LF>, but found value char value " + ch);
-
-            return sb.ToString();
-        }
-
 
         /// <summary>
         /// Send the response header before the stream is read or written
         /// </summary>
-        void SendHttpHeader()
+        async Task SendHttpHeaderAsync()
         {
             if (mHeaderSent)
                 throw new HttpException(500, "SendHttpHeader: Http header already sent");
@@ -269,7 +239,7 @@ namespace Gosub.Http
                             + (mResponse.ContentType == "" ? "" : "Content-Type:" + mResponse.ContentType + CRLF)
                             + CRLF;
             var headerBytes = Encoding.UTF8.GetBytes(header);
-            mWriter.Write(headerBytes, 0, headerBytes.Length);
+            await mWriter.WriteAsync(headerBytes, 0, headerBytes.Length);
 
             // Good to go, reset streams
             mReader.PositionInternal = 0;
@@ -278,32 +248,32 @@ namespace Gosub.Http
             mWriter.LengthInternal = Math.Max(0, mResponse.ContentLength);
         }
 
-        public void SendResponse(byte []message)
+        public async Task SendResponseAsync(byte []message)
         {
             mResponse.ContentLength = message.Length;
-            GetWriter(message.Length).Write(message, 0, message.Length);
+            await (await GetWriterAsync(message.Length)).WriteAsync(message, 0, message.Length);
         }
 
-        public void SendResponse(string message)
+        public async Task SendResponseAsync(string message)
         {
-            SendResponse(Encoding.UTF8.GetBytes(message));
+            await SendResponseAsync(Encoding.UTF8.GetBytes(message));
         }
 
-        public void SendResponse(string message, int statusCode)
+        public async Task SendResponseAsync(string message, int statusCode)
         {
             mResponse.StatusCode = statusCode;
-            SendResponse(message);
+            await SendResponseAsync(message);
         }
 
-        public void SendFile(string path)
+        async public Task SendFileAsync(string path)
         {
             if (!File.Exists(path))
                 throw new HttpException(404, "File not found", true);
             using (var stream = File.OpenRead(path))
-                stream.CopyTo(GetWriter(stream.Length));
+                await (await GetWriterAsync(stream.Length)).WriteAsync(stream);
         }
 
-        public byte[] ReadContent(int maxLength)
+        async public Task<byte[]> ReadContentAsync(int maxLength)
         {
             // Currently we require the sender to include 'Content-Length.
             // TBD: Fix this since it is not required by the HTTP protocol
@@ -313,11 +283,11 @@ namespace Gosub.Http
                 throw new HttpException(413, "Content length is too large");
 
             // Read specific number of bytes (TBD: Enforce timeout)
-            var stream = GetReader();
+            var stream = await GetReaderAsync();
             var buffer = new byte[mRequest.ContentLength];
             int index = 0;
             while (index < buffer.Length)
-                index += stream.Read(buffer, index, buffer.Length - index);
+                index += await stream.ReadAsync(buffer, index, buffer.Length - index);
             return buffer;
         }
 

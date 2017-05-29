@@ -11,69 +11,52 @@ namespace Gosub.Http
     /// <summary>
     /// An HTTP stream reader.  Do not dispose (the web server owns and re-uses these)
     /// </summary>
-    public class HttpReader : Stream
+    public class HttpReader
     {
+        const int HTTP_MAX_HEADER_LENGTH = 16000;
+
         Stream mStream;
+        CancellationToken mCancellationToken;
+        bool mSync;
         long mLength;
         long mPosition;
 
-        internal HttpReader(Stream stream)
+        int mBufferIndex;
+        int mBufferLength;
+        byte[] mBuffer;
+
+        internal HttpReader(Stream stream, CancellationToken cancellationToken, bool sync)
         {
             mStream = stream;
+            mCancellationToken = cancellationToken;
+            mSync = sync;
         }
 
-        public override long Length => mLength;
-        public override long Position { get => mPosition; set => throw new NotImplementedException(); }
-        public override bool CanRead => true;
-        public override bool CanWrite => false;
-        public override bool CanSeek => false;
-        public override void SetLength(long value) { throw new NotImplementedException(); }
-        public override long Seek(long offset, SeekOrigin origin) { throw new NotImplementedException(); }
-        public override bool CanTimeout => true;
-        public override int ReadTimeout { get => mStream.ReadTimeout; set => mStream.ReadTimeout = value; }
-        public override int WriteTimeout { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotImplementedException();
-        public override void WriteByte(byte value) => throw new NotImplementedException();
-        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-            => throw new NotImplementedException();
+        public CancellationToken CancellationToken { get => mCancellationToken; }
+        public long Length => mLength;
+        public long Position => mPosition;
+        public int ReadTimeout { get => mStream.ReadTimeout; set => mStream.ReadTimeout = value; }
 
-        // Do not allow Close or Dispose (the web server manages the streams)
-        public override void Flush() => mStream.Flush();
-        public override void Close() => mStream.Flush();
-        protected override void Dispose(bool disposing) => mStream.Flush();
-
-        /// <summary>
-        /// Server only
-        /// </summary>
-        internal long PositionInternal { get => mPosition; set => mPosition = value; }
-        internal long LengthInternal { get => mLength; set => mLength = value; }
-        
-        public override int Read(byte[] buffer, int offset, int count)
+        public async Task<int> ReadAsync(byte[] buffer, int offset, int count)
         {
             // Limit number of bytes to read
             count = (int)Math.Min(mLength - mPosition, count);
-            if (count <= 0)
-                return 0;
-            var length = mStream.Read(buffer, offset, count);
-            mPosition += length;
-            return length;
-        }
 
-        public override int ReadByte()
-        {
-            if (mPosition >= mLength)
-                return -1;
-            int b = mStream.ReadByte();
-            if (b >= 0)
-                mPosition++;
-            return b;
-        }
+            // Read data from internal buffer
+            int length;
+            if (mBufferIndex != mBufferLength)
+            {
+                length = Math.Min(count, mBufferLength - mBufferIndex);
+                Array.Copy(mBuffer, mBufferIndex, buffer, offset, length);
+                mBufferIndex += length;
+                return length;
+            }
+            // Pass request to underlying stream
+            if (mSync)
+                length = mStream.Read(buffer, offset, count);
+            else
+                length = await mStream.ReadAsync(buffer, offset, count, mCancellationToken);
 
-        public async override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
-        {
-            // Limit number of bytes to read
-            count = (int)Math.Min(mLength - mPosition, count);
-            int length = await mStream.ReadAsync(buffer, offset, count, cancellationToken);
             mPosition += length;
             return length;
         }
@@ -82,7 +65,7 @@ namespace Gosub.Http
         /// Fill a buffer with the requested number of bytes, do not return 
         /// until they are all there or a timeout exception is thrown
         /// </summary>
-        public async Task<int> ReadAllAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
+        public async Task<int> ReadAllAsync(ArraySegment<byte> buffer)
         {
             int offset = 0;
             while (offset < buffer.Count)
@@ -93,6 +76,66 @@ namespace Gosub.Http
                 offset += length;
             }
             return offset;
+        }
+
+        /// <summary>
+        /// Server only
+        /// </summary>
+        internal long PositionInternal { get => mPosition; set => mPosition = value; }
+        internal long LengthInternal { get => mLength; set => mLength = value; }
+
+        /// <summary>
+        /// Called by the server to read the HTTP header into an internal buffer.
+        /// Throws an exception if the header is too long
+        /// </summary>
+        internal async Task<ArraySegment<byte>> ReadHttpHeaderAsyncInternal()
+        {
+            // Create or shift buffer
+            if (mBuffer == null)
+                mBuffer = new byte[HTTP_MAX_HEADER_LENGTH];
+            if (mBufferIndex != mBufferLength)
+                Array.Copy(mBuffer, mBufferIndex, mBuffer, 0, mBufferLength - mBufferIndex);
+            mBufferLength = mBufferLength - mBufferIndex;
+            mBufferIndex = 0;
+
+            // Wait for HTTP header
+            int headerEndIndex = 0;
+            while (!FindEndOfHttpHeaderIndex(ref headerEndIndex))
+            {
+                int maxCount = mBuffer.Length - mBufferLength;
+                if (maxCount <= 0)
+                    throw new HttpException(400, "HTTP header is too long");
+
+                int length;
+                if (mSync)
+                    length = mStream.Read(mBuffer, mBufferLength, maxCount);
+                else
+                    length = await mStream.ReadAsync(mBuffer, mBufferLength, maxCount, mCancellationToken);
+                mBufferLength += length;
+
+                if (length == 0)
+                    throw new HttpException(400, "EOF found in HTTP header");
+            }
+
+            // Consume the header and return the buffer
+            mBufferIndex = headerEndIndex;
+            return new ArraySegment<byte>(mBuffer, 0, mBufferIndex);
+        }
+
+        bool FindEndOfHttpHeaderIndex(ref int index)
+        {
+            int i = index;
+            while (i < mBufferLength - 3)
+            {
+                if (mBuffer[i] == '\r' && mBuffer[i+1] == '\n' && mBuffer[i+2] == '\r' && mBuffer[i+3] == '\n')
+                {
+                    index = i + 4;
+                    return true;
+                }
+                i++;
+            }
+            index = i;
+            return false;
         }
 
 

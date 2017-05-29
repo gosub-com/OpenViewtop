@@ -7,6 +7,8 @@ using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Gosub.Http;
+using System.Threading.Tasks;
+
 
 namespace Gosub.Viewtop
 {
@@ -35,7 +37,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public void ProcessWebRemoteViewerRequest(HttpContext context)
+        async public Task ProcessWebRemoteViewerRequest(HttpContext context)
         {
             var request = context.Request;
             var response = context.Response;
@@ -65,13 +67,13 @@ namespace Gosub.Viewtop
 
                 if (mMimeTypes.TryGetValue(extension, out string contentType))
                     response.ContentType = contentType;
-                context.SendFile(path);
+                await context.SendFileAsync(path);
                 return;
             }
 
             if (!request.Query.TryGetValue("query", out string query))
             {
-                SendJsonError(context, "Query must include 'query' parameter");
+                await SendJsonErrorAsync(context, "Query must include 'query' parameter");
                 return;
             }
 
@@ -88,25 +90,25 @@ namespace Gosub.Viewtop
                     newSession = new ViewtopSession(sessionId);
                     mSessions[sessionId] = newSession;
                 }
-                newSession.ProcessWebRemoteViewerRequest(context);
+                await newSession.ProcessWebRemoteViewerRequestAsync(context);
                 return;
             }
 
             if (!long.TryParse(request.Query.Get("sid"), out long sid))
             {
-                SendJsonError(context, "Query must include 'sid'");
+                await SendJsonErrorAsync(context, "Query must include 'sid'");
                 return;
             }
             ViewtopSession session;
             lock (mLock)
+                mSessions.TryGetValue(sid, out session);
+            if (session == null)
             {
-                if (!mSessions.TryGetValue(sid, out session))
-                {
-                    SendJsonError(context, "Unknown 'sid'");
-                    return;
-                }
+                await SendJsonErrorAsync(context, "Unknown 'sid'");
+                return;
             }
-            session.ProcessWebRemoteViewerRequest(context);
+
+            await session.ProcessWebRemoteViewerRequestAsync(context);
         }
 
         private void PurgeInactiveSessions()
@@ -126,9 +128,9 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Error messages from the viewtop server are in JSON with code 200
         /// </summary>
-        public static void SendJsonError(HttpContext context, string message)
+        public async static Task SendJsonErrorAsync(HttpContext context, string message)
         {
-            context.SendResponse(@"{""FAIL"":""" +
+            await context.SendResponseAsync(@"{""FAIL"":""" +
                 message.Replace("\"", "\\\"").Replace("\\", "\\\\")
                 + @"""}", 400);
         }

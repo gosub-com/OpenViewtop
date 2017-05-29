@@ -252,13 +252,13 @@ namespace Gosub.Viewtop
                 var certificate = GetCertificate();
                 mHttpServer = new HttpServer();
                 mHttpServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT),
-                    (context) => { mOvtServer.ProcessWebRemoteViewerRequest(context); });
+                    (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); });
 
                 // Setup HTTPS server
                 mHttpsServer = new HttpServer();
                 mHttpsServer.UseSsl(certificate);
                 mHttpsServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT),
-                    (context) => { mOvtServer.ProcessWebRemoteViewerRequest(context); });
+                    (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); });
             }
             catch (Exception ex)
             {

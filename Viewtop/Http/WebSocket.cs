@@ -123,7 +123,7 @@ namespace Gosub.Http
             // Read frame
             var count = Math.Min(buffer.Count, mReadFrameLength - mReadFrameOffset);
             if (count > 0)
-                count = await mReader.ReadAllAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset, count), cancellationToken);
+                count = await mReader.ReadAllAsync(new ArraySegment<byte>(buffer.Array, buffer.Offset, count));
             cancellationToken.ThrowIfCancellationRequested();
             mReadFrameOffset += count;
 
@@ -155,7 +155,7 @@ namespace Gosub.Http
         async Task ReadHeaderAsync(CancellationToken cancellationToken)
         {
             // Read control bytes
-            await mReader.ReadAllAsync(new ArraySegment<byte>(mReadHeaderBuffer, 0, 2), cancellationToken);
+            await mReader.ReadAllAsync(new ArraySegment<byte>(mReadHeaderBuffer, 0, 2));
             byte b = mReadHeaderBuffer[0];
             mReadFinal = (b & 0x80) != 0;
             mReadFrameLength = mReadHeaderBuffer[1] & 0x7F;
@@ -173,7 +173,7 @@ namespace Gosub.Http
                 extra += 8;
 
             // Read remaining packet header
-            await mReader.ReadAllAsync(new ArraySegment<byte>(mReadHeaderBuffer, 0, extra), cancellationToken);
+            await mReader.ReadAllAsync(new ArraySegment<byte>(mReadHeaderBuffer, 0, extra));
 
             // Read packet length
             int index = 0;
@@ -229,12 +229,6 @@ namespace Gosub.Http
             message[0] = (byte)((int)closeStatus >> 8);
             message[1] = (byte)(int)closeStatus;
             await SendAsync(new ArraySegment<byte>(message), WebSocketMessageType.Close, true, cancellationToken);
-            await mWriter.FlushAsync();
-        }
-
-        public async Task FlushAsync()
-        {
-            await mWriter.FlushAsync();
         }
 
         public async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
@@ -276,8 +270,8 @@ namespace Gosub.Http
                 mWriteHeaderBuffer[9] = (byte)buffer.Count;
                 index = 10;
             }
-            await mWriter.WriteAsync(mWriteHeaderBuffer, 0, index, cancellationToken);
-            await mWriter.WriteAsync(buffer.Array, buffer.Offset, buffer.Count, cancellationToken);
+            await mWriter.WriteAsync(mWriteHeaderBuffer, 0, index);
+            await mWriter.WriteAsync(buffer.Array, buffer.Offset, buffer.Count);
         }
     }
 }
