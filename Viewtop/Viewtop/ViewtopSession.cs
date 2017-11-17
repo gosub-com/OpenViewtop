@@ -13,6 +13,7 @@ using System.IO;
 using System.IO.Compression;
 using Gosub.Http;
 using System.Threading.Tasks;
+using System.Drawing;
 
 namespace Gosub.Viewtop
 {
@@ -36,8 +37,13 @@ namespace Gosub.Viewtop
         bool mAuthenticated;
         long mSequence;
         Dictionary<long, FrameInfo> mHistory = new Dictionary<long, FrameInfo>();
-        FrameCollector mCollector;
-        FrameCompressor mAnalyzer;
+
+        double mScreenScale = 1;
+        FrameCollector mCollectorXhr = new FrameCollector();
+        Queue<FrameCollector> mCollectors = new Queue<FrameCollector>(new FrameCollector[] { new FrameCollector(), new FrameCollector() });
+        Queue<CollectRequest> mCollectRequests = new Queue<CollectRequest>();
+
+        FrameCompressor mAnalyzer = new FrameCompressor();
         MouseAndKeyboard mEvents = new MouseAndKeyboard();
         Clip mClip = new Clip();
         ClipInfo mClipInfo = new ClipInfo();
@@ -105,6 +111,17 @@ namespace Gosub.Viewtop
             public string Type = "";
             public string FileName = "";
             public string FileCount = "0";
+        }
+
+        /// <summary>
+        /// Copying the screen is slow, so collect requests are double buffered and processed in a background task
+        /// </summary>
+        struct CollectRequest
+        {
+            public FrameCollector Collector;
+            public long Seq;
+            public string DrawOptions;
+            public Task Task;
         }
 
         class Stats
@@ -227,31 +244,69 @@ namespace Gosub.Viewtop
             await WriteJson(websocket, authenticateResponse);
 
             // Main loop
+            Task<WebSocketMessageType> receiveTask = null;
             while (websocket.State < WebSocketState.CloseSent)
-            {                
-                // Read request
-                await websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
-                var request = ReadJson<RemoteEvents>(mWebsocketRequestStream);
+            {
+                // Start read request if needed
+                if (receiveTask == null)
+                    receiveTask = websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
 
-                ProcessRemoteEvents(request.Events);
+                // Await something to do (message from remote, or a completed screen capture)
+                if (mCollectRequests.Count != 0)
+                    await Task.WhenAny(new Task[] { mCollectRequests.Peek().Task, receiveTask });
+                else
+                    await receiveTask;
 
-                var draw = request.DrawRequest;
-                if (draw != null)
+                // Send frames that may have completed in the background
+                while (mCollectRequests.Count != 0 && mCollectRequests.Peek().Task.IsCompleted)
+                    await DequeueCollectRequestAndSendFrame(websocket);
+
+                // Process remote events
+                if (receiveTask.IsCompleted)
                 {
-                    // Parse options query string TBD: Change this to JSON
-                    var queryStrings = HttpContext.ParseQueryString(
-                        draw.Options 
-                        + "&maxwidth=" + draw.MaxWidth 
-                        + "&maxheight=" + draw.MaxHeight);
+                    if (await receiveTask == WebSocketMessageType.Close)
+                        break; // Closed by remote
+                    receiveTask = null;
 
-                    var frame = new FrameInfo();
-                    GetFrame(frame, queryStrings);
-                    GetClipInfo(frame);
-                    frame.Seq = draw.Seq; // TBD: Remove, but websocket JS needs this for now
-
-                    await WriteJson(websocket, frame);
+                    var request = ReadJson<RemoteEvents>(mWebsocketRequestStream);
+                    ProcessRemoteEvents(request.Events);
+                    if (request.DrawRequest != null)
+                        await EnqueueCollectRequestAsync(websocket, request);
                 }
             }
+        }
+
+        private async Task EnqueueCollectRequestAsync(WebSocket websocket, RemoteEvents request)
+        {
+            // Ensure there is a collector.  Wait for one if necessary
+            if (mCollectors.Count == 0)
+                await DequeueCollectRequestAndSendFrame(websocket);
+
+            var collector = mCollectors.Dequeue();
+            CollectRequest collectRequest;
+            collectRequest.Collector = collector;
+            collectRequest.Seq = request.DrawRequest.Seq;
+            collectRequest.DrawOptions = request.DrawRequest.Options;
+            collectRequest.Task = Task.Run(() =>
+            {
+                collector.CopyScreen(request.DrawRequest.MaxWidth, request.DrawRequest.MaxHeight);
+            });
+            mCollectRequests.Enqueue(collectRequest);
+        }
+
+        private async Task DequeueCollectRequestAndSendFrame(WebSocket websocket)
+        {
+            var drawRequest = mCollectRequests.Dequeue();
+            await drawRequest.Task;
+
+            mScreenScale = drawRequest.Collector.Scale;
+            mCollectors.Enqueue(drawRequest.Collector);
+            var frame = new FrameInfo();
+            GetFrame(drawRequest.Collector, HttpContext.ParseQueryString(drawRequest.DrawOptions), frame);
+            GetClipInfo(frame);
+
+            frame.Seq = drawRequest.Seq; // TBD: Remove?
+            await WriteJson(websocket, frame);
         }
 
         /// <summary>
@@ -313,16 +368,14 @@ namespace Gosub.Viewtop
             return loginInfo;
         }
 
-        void UpdateMousePositionFromDrawQuery(Http.HttpRequest request)
+        void UpdateMousePositionFromDrawQuery(HttpRequest request)
         {
             var queryString = request.Query;
             if (long.TryParse(queryString.Get("t"), out long time)
                 && int.TryParse(queryString.Get("x"), out int x)
-                && int.TryParse(queryString.Get("y"), out int y)
-                && mCollector != null 
-                && mCollector.Scale != 0)
+                && int.TryParse(queryString.Get("y"), out int y))
             {
-                mEvents.SetMousePosition(time, 1 / mCollector.Scale, x, y, false);
+                mEvents.SetMousePosition(time, 1 / mScreenScale, x, y, false);
             }
         }
 
@@ -335,8 +388,8 @@ namespace Gosub.Viewtop
             {
                 // Send mouse position, force it to move if there is a click event
                 bool force = e.Event == "mousedown" || e.Event == "mouseup" || e.Event == "mousewheel";
-                if (e.Event.StartsWith("mouse") && mCollector != null && mCollector.Scale != 0)
-                    mEvents.SetMousePosition(e.Time, 1 / mCollector.Scale, e.X, e.Y, force);
+                if (e.Event.StartsWith("mouse"))
+                    mEvents.SetMousePosition(e.Time, 1 / mScreenScale, e.X, e.Y, force);
 
                 switch (e.Event)
                 {
@@ -358,8 +411,6 @@ namespace Gosub.Viewtop
                 }
             }
         }
-
-
 
         /// <summary>
         /// Retrieve the requested frame via xhr (i.e. order frames and use cache)
@@ -405,8 +456,12 @@ namespace Gosub.Viewtop
                 mSequence++;
 
                 // Generate the frame
+                int.TryParse(queryString.Get("maxwidth"), out int maxWidth);
+                int.TryParse(queryString.Get("maxheight"), out int maxHeight);
                 frame = new FrameInfo();
-                GetFrame(frame, queryString);
+                mCollectorXhr.CopyScreen(maxWidth, maxHeight);
+                mScreenScale = mCollectorXhr.Scale;
+                GetFrame(mCollectorXhr, queryString, frame);
                 GetClipInfo(frame);
 
                 // Save the frame in history and delete old frames
@@ -418,17 +473,8 @@ namespace Gosub.Viewtop
             }
         }
 
-        void GetFrame(FrameInfo frame, HttpQuery queryString)
+        void GetFrame(FrameCollector collector, HttpQuery queryString, FrameInfo frame)
         {
-            if (mCollector == null)
-                mCollector = new FrameCollector();
-            if (mAnalyzer == null)
-                mAnalyzer = new FrameCompressor();
-
-            // Process MaxWidth and MaxHeight
-            int.TryParse(queryString.Get("maxwidth"), out int maxWidth);
-            int.TryParse(queryString.Get("maxheight"), out int maxHeight);
-
             // Full frame analysis
             mAnalyzer.FullFrame = queryString.Get("fullframe") != "";
 
@@ -456,18 +502,16 @@ namespace Gosub.Viewtop
             else
                 mAnalyzer.Output = FrameCompressor.OutputType.Normal;
 
-            // Collect the frame
-            var bm = mCollector.CreateFrame(maxWidth, maxHeight);
+            // Compress the frame
             var compressStartTime = DateTime.Now;
-            var frames = mAnalyzer.Compress(bm);
+            var frames = mAnalyzer.Compress(collector.Screen);
             Debug.Assert(frames.Length != 0);
-            bm.Dispose();
             var compressTime = DateTime.Now - compressStartTime;
 
             // Generate stats
             Stats stats = new Stats();
-            stats.CopyTime = (int)mCollector.CopyTime.TotalMilliseconds;
-            stats.ShrinkTime = (int)mCollector.ShrinkTime.TotalMilliseconds;
+            stats.CopyTime = (int)collector.CopyTime.TotalMilliseconds;
+            stats.ShrinkTime = (int)collector.ShrinkTime.TotalMilliseconds;
             stats.CompressTime = (int)compressTime.TotalMilliseconds;
             stats.Duplicates = mAnalyzer.Duplicates;
             stats.Collisions = mAnalyzer.HashCollisionsEver;

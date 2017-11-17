@@ -18,6 +18,7 @@ namespace Gosub.Http
         CancellationToken mCancellationToken;
         long mLength;
         long mPosition;
+        byte[] mHeaderBytes;
 
         internal HttpWriter(Stream stream, CancellationToken cancellationToken, bool sync)
         {
@@ -36,9 +37,33 @@ namespace Gosub.Http
         /// </summary>
         internal long PositionInternal { get => mPosition; set => mPosition = value; }
         internal long LengthInternal { get => mLength; set => mLength = value; }
+        internal void SetHeaderInternal(byte[] headerBytes)
+        {
+            if (mHeaderBytes != null)
+                throw new HttpException(500, "Header bytes already set");
+            mHeaderBytes = headerBytes;
+        }
+        internal async Task FlushHeaderInternal()
+        {
+            if (mHeaderBytes != null)
+                await WriteAsync(null, 0, 0);
+        }
 
         public async Task WriteAsync(byte[] buffer, int offset, int count)
         {
+            // Send Header
+            if (mHeaderBytes != null)
+            {
+                if (mSync)
+                    mStream.Write(mHeaderBytes, 0, mHeaderBytes.Length);
+                else
+                    await mStream.WriteAsync(mHeaderBytes, 0, mHeaderBytes.Length, mCancellationToken);
+                mHeaderBytes = null;
+            }
+            if (count == 0)
+                return;
+
+            // Send data
             mPosition += count;
             if (mPosition > mLength)
                 throw new HttpException(500, "Request handler wrote too many bytes");

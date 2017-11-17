@@ -11,7 +11,6 @@ using System.IO;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 
-
 namespace Gosub.Http
 {
     /// <summary>
@@ -29,7 +28,6 @@ namespace Gosub.Http
         CancellationToken mCancellationToken = CancellationToken.None; // TBD: Implement cancellation token
         int mConcurrentRequests;
         int mMaxConcurrentRequests;
-
 
         public HttpServer()
         {
@@ -98,17 +96,19 @@ namespace Gosub.Http
                     // Setup stream or SSL stream
                     client.NoDelay = true;
                     var tcpStream = (Stream)client.GetStream();
+                    bool isSecure = false;
                     if (mCertificate != null)
                     {
                         // Wrap stream in an SSL stream, and authenticate
                         var sslStream = new SslStream(tcpStream, false);
                         await sslStream.AuthenticateAsServerAsync(mCertificate);
                         tcpStream = sslStream;
+                        isSecure = true;
                     }
                     // Process requests on this possibly persistent TCP stream
                     var reader = new HttpReader(tcpStream, mCancellationToken, Sync);
                     var writer = new HttpWriter(tcpStream, mCancellationToken, Sync);
-                    context = new HttpContext(client, reader, writer);
+                    context = new HttpContext(client, reader, writer, isSecure);
                     await ProcessRequests(context, reader, writer).ConfigureAwait(false);
                 }
                 catch (Exception ex)
@@ -139,9 +139,7 @@ namespace Gosub.Http
                 // Read header
                 reader.ReadTimeout = HeaderTimeout;
                 if (!await context.ReadHttpHeaderAsync().ConfigureAwait(false))
-                {
-                    return; // EOF
-                }
+                    return; // Connection closed
 
                 // Handle body
                 reader.ReadTimeout = HeaderTimeout;
@@ -158,6 +156,7 @@ namespace Gosub.Http
                     // Keep the persistent connection open only if it's OK to do so.
                     await ProcessExceptionAsync(context, ex);
                 }
+                await writer.FlushHeaderInternal();
 
                 // Any of these problems will terminate a persistent connection
                 var response = context.Response;

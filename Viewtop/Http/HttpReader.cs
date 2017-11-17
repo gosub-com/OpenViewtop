@@ -49,6 +49,7 @@ namespace Gosub.Http
                 length = Math.Min(count, mBufferLength - mBufferIndex);
                 Array.Copy(mBuffer, mBufferIndex, buffer, offset, length);
                 mBufferIndex += length;
+                mPosition += length;
                 return length;
             }
             // Pass request to underlying stream
@@ -86,7 +87,8 @@ namespace Gosub.Http
 
         /// <summary>
         /// Called by the server to read the HTTP header into an internal buffer.
-        /// Throws an exception if the header is too long
+        /// Returns an empty buffer if the connection is closed.
+        /// Throws an exception if there is an error.
         /// </summary>
         internal async Task<ArraySegment<byte>> ReadHttpHeaderAsyncInternal()
         {
@@ -114,7 +116,11 @@ namespace Gosub.Http
                 mBufferLength += length;
 
                 if (length == 0)
-                    throw new HttpException(400, "EOF found in HTTP header");
+                {
+                    if (mBufferIndex != 0)
+                        throw new HttpException(400, "Connection closed after reading partial HTTP header");
+                    return new ArraySegment<byte>();
+                }
             }
 
             // Consume the header and return the buffer

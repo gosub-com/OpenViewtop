@@ -63,7 +63,7 @@ namespace Gosub.Viewtop
             {
                 // Static files can only be a GET request
                 if (request.HttpMethod != "GET")
-                    throw new Exception("Invalid HTTP request: Only GET method is allowed for serving ");
+                    throw new HttpException(405, "Invalid HTTP request: Only GET method is allowed for serving ");
 
                 if (mMimeTypes.TryGetValue(extension, out string contentType))
                     response.ContentType = contentType;
