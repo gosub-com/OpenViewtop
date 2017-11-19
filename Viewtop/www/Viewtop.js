@@ -39,10 +39,6 @@ function Viewtop(drawString, canvas)
     var mDrawSequence = 1;
     var mDrawQueue = {};
 
-    var mPutSequence = 1;
-    var mPutsOutstanding = 0;
-    var mPutSendTime = 0;
-
     // Round trip time
     var mRtt = 400;
     var mRttSkipsInARow = 0;
@@ -68,13 +64,13 @@ function Viewtop(drawString, canvas)
     this.DrawOptions = "";
 
     // Start the session
-    this.Start = function (username, password, useXhr)
+    this.Start = function (username, password)
     {
         mUsername = username;
         mPassword = password;
         mRunning = true;
         InitializeCanvas();
-        StartSession(useXhr);
+        StartSession();
 
         mCanvas.onmousemove = OnMouseMove;
         mCanvas.onmousedown = OnMouseDown;
@@ -193,9 +189,9 @@ function Viewtop(drawString, canvas)
     }
 
     // Start session using XmlHttpRequest
-    function StartSession(useXhr)
+    function StartSession()
     {
-        HttpGet("index.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername,
+        HttpGet("openviewtop.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername,
         function ()
         {
             if (!HttpDone(this, "Start session request failed"))
@@ -203,18 +199,14 @@ function Viewtop(drawString, canvas)
             var sessionInfo = JSON.parse(this.responseText);
             mSessionId = sessionInfo.sid;
 
-            // Use Xhr or Websockets
-            if (useXhr)
-                LoginXhr(sessionInfo.salt, sessionInfo.challenge);
-            else
-                LoginWs(sessionInfo.salt, sessionInfo.challenge);
+            LoginWs(sessionInfo.salt, sessionInfo.challenge);
         });
     }
 
     function LoginWs(salt, challenge)
     {
         var protocol = (location.protocol == "https:" ? "wss" : "ws") + "://";
-        var path = "/index.ovt";
+        var path = "/openviewtop.ovt";
         var query = "?query=ws&sid=" + mSessionId;
         mWebSocket = new WebSocket(protocol + location.host + path + query, "viewtop");
 
@@ -246,7 +238,7 @@ function Viewtop(drawString, canvas)
         if (!mRunning)
             return;
 
-        var m = JSON.parse(event.data);
+        var m = JSON.parse(e.data);
 
         if (m.Event == "Close")
         {
@@ -344,117 +336,6 @@ function Viewtop(drawString, canvas)
         mWebSocket.send(JSON.stringify(event));
     }
 
-    function LoginXhr(salt, challenge)
-    {
-        HttpGet("index.ovt?query=login&sid=" + mSessionId
-                + "&username=" + mUsername
-                + "&hash=" + Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase(),
-        function ()
-        {
-            if (!HttpDone(this, "Login request failed"))
-                return;
-            var loginInfo = JSON.parse(this.responseText);
-            if (!loginInfo.LoggedIn)
-            {
-                ShowError("Invalid user name or password");
-                return;
-            }
-            THIS.ComputerNameLabel.innerHTML = loginInfo.ComputerName;
-            EventsLoopXhr();
-        });
-    }
-
-    // Main event processing loop for Xhr
-    function EventsLoopXhr()
-    {
-        if (!mRunning)
-            return;
-
-        try
-        {
-            // Draw frames from the queue
-            var drawBuffer = mDrawQueue[mDrawSequence];
-            while (drawBuffer)
-            {
-                delete mDrawQueue[mDrawSequence];
-                mDrawSequence++;
-                ProcessData(drawBuffer);
-                drawBuffer = mDrawQueue[mDrawSequence];
-            }
-
-            // Request frame
-            var getsOutstanding = mGetSequence - mDrawSequence;
-            if (getsOutstanding == 0)
-                LoadFrameXhr();
-
-            // Request next frame before receiving previous frame 
-            // (i.e. double buffer) to reduce the round trip time latency.  
-            if (getsOutstanding == 1 && Date.now() - mGetSendTime > mRtt * RTT_TRIGGER_RATIO - RTT_TRIGGER_MIN_MS)
-                LoadFrameXhr();
-
-            // Send mouse and keyboard events
-            if (mPutsOutstanding == 0 && mKeyAndMouseEvents.length != 0)
-                SendEventsXhr();
-        }
-        catch (e)
-        {
-            mRunning = false;
-            ShowError(e.stack);
-        }
-        setTimeout(function () { EventsLoopXhr(); }, EVENTS_LOOP_TIME_MS);
-    }
-
-    function SendEventsXhr()
-    {
-        var jsonObject = { Events: mKeyAndMouseEvents};
-        mKeyAndMouseEvents = [];
-
-        var sequence = mPutSequence;
-        mPutSequence = mPutSequence + 1;
-
-        mPutSendTime = Date.now();
-        mPutsOutstanding++;
-        HttpPut("index.ovt?query=events&sid=" + mSessionId + "&seq=" + sequence,
-                JSON.stringify(jsonObject),
-        function ()
-        { 
-            if (!HttpDone(this, "Send events failed"))
-                return;
-            mPutsOutstanding--;
-        });
-    }
-
-    function LoadFrameXhr()
-    {
-        var sequence = mGetSequence;
-        mGetSequence = mGetSequence + 1;
-
-        // Find canvas size
-        var WINDOW_BORDER_HEIGHT = 40; // Document margin, scroll bar, menu bar at top, etc.
-        var fullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement;
-        var width = fullscreen ? window.innerWidth : document.body.clientWidth;
-        var height = fullscreen ? window.innerHeight : (window.innerHeight - WINDOW_BORDER_HEIGHT);
-
-        // Start downloading the draw buffer
-        var sendTime = Date.now();
-        mGetSendTime = sendTime;
-        HttpGet("index.ovt?query=draw&sid=" + mSessionId
-                        + "&seq=" + sequence
-                        + "&t=" + mGetSendTime
-                        + "&x=" + mMouseX
-                        + "&y=" + mMouseY
-                        + "&maxwidth=" + width
-                        + "&maxheight=" + height
-                        + "&" + THIS.DrawOptions,
-        function ()
-        {
-            if (!HttpDone(this, "Frame request failed"))
-                return;
-            SetRtt(Date.now() - sendTime);
-            LoadImagesThenQueue(JSON.parse(this.responseText), sequence);
-        });
-    }
-
     // Load all the images in parallel, then queue the frame to be drawn in the order received
     function LoadImagesThenQueue(drawBuffer, sequence)
     {
@@ -511,7 +392,7 @@ function Viewtop(drawString, canvas)
             clip.onclick = function ()
             {
                 // Download text, then show message to allow user to copy using CTRL-C
-                HttpGet("index.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime,
+                HttpGet("openviewtop.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime,
                 function ()
                 {
                     if (!HttpDone(this, "Copy clipboard text failed"))
@@ -527,7 +408,7 @@ function Viewtop(drawString, canvas)
             clip.style = "";
             clip.title = "DOWNLOAD FILE: '" + drawBuffer.Clip.FileName + "'"
                 + (drawBuffer.Clip.FileCount == 1 ? "" : ", (" + drawBuffer.Clip.FileCount + " files)");
-            clip.setAttribute('href', "index.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime);
+            clip.setAttribute('href', "openviewtop.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime);
             clip.setAttribute('download', drawBuffer.Clip.FileName);
             clip.onclick = function () { };
         }
@@ -570,14 +451,6 @@ function Viewtop(drawString, canvas)
             if (stats.hasOwnProperty(key))
                 statsStr += key + ": " + stats[key] + "<br>";
         mDrawString.innerHTML = statsStr;
-    }
-
-    function HttpPut(url, data, onreadystatechangefunction)
-    {
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = onreadystatechangefunction;
-        xhttp.open("PUT", url, true);
-        xhttp.send(data);
     }
 
     function HttpGet(url, onreadystatechangefunction)

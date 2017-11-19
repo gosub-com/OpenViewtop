@@ -57,15 +57,14 @@ namespace Gosub.Viewtop
             if (path.Contains("..") || path.Contains(hiddenFileName))
                 throw new HttpException(400, "Invalid Request: File name is invalid", true);
 
-            // Serve static pages unless
-            var extension = Path.GetExtension(path).ToLower();
-            if (extension != ".ovt")
+            // Serve static pages unless it's /openviewtop.ovt
+            if (request.Target != "/openviewtop.ovt")
             {
                 // Static files can only be a GET request
                 if (request.HttpMethod != "GET")
                     throw new HttpException(405, "Invalid HTTP request: Only GET method is allowed for serving ");
 
-                if (mMimeTypes.TryGetValue(extension, out string contentType))
+                if (mMimeTypes.TryGetValue(Path.GetExtension(path).ToLower(), out string contentType))
                     response.ContentType = contentType;
                 await context.SendFileAsync(path);
                 return;
@@ -118,7 +117,7 @@ namespace Gosub.Viewtop
                 var now = DateTime.Now;
                 var timedOutSessions = new List<long>();
                 foreach (var sessionKv in mSessions)
-                    if ((now - sessionKv.Value.LastRequestTime).TotalSeconds > CONNECTION_TIMEOUT_SEC)
+                    if (sessionKv.Value.SessionClosed)
                         timedOutSessions.Add(sessionKv.Key);
                 foreach (var sessionId in timedOutSessions)
                     mSessions.Remove(sessionId);

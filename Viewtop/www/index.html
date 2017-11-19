@@ -67,9 +67,6 @@ button::-moz-focus-inner
         <div id="unsecureWarningId" style="display:none;">
             <b style="color:red;">Warning:</b> This connection is running over HTTP and is unsecure
         </div>
-        <div>
-            <label><input type="checkbox" id="useXhrId">Use XHR (obsolete)</label>
-        </div>
     </div>
 
     <div id="remoteConnectedPageId" style="display:none" >
@@ -133,7 +130,6 @@ button::-moz-focus-inner
     var mRemoteStats = document.getElementById('remoteStatsId');
     var mUsername = document.getElementById('usernameId');
     var mPassword = document.getElementById('passwordId');
-    var mUseXhr = document.getElementById('useXhrId');
     var mErrorMessage = document.getElementById('errorMessageId');
     
     document.getElementById('unsecureWarningId').style.display = location.protocol === "https:" ? "none" : "block";
@@ -156,7 +152,7 @@ button::-moz-focus-inner
         mViewer.ClipboardButton = document.getElementById('clipboardId');
         mViewer.ComputerNameLabel = document.getElementById('computerNameId');
         UpdateOptions();
-        mViewer.Start(mUsername.value, mPassword.value, mUseXhr.checked);
+        mViewer.Start(mUsername.value, mPassword.value);
     }
 
     function Logout()

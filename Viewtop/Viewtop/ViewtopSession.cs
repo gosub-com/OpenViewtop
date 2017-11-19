@@ -29,17 +29,14 @@ namespace Gosub.Viewtop
         const int MAX_FILE_COUNT = 100;
 
         public long SessionId { get; }
-        public DateTime LastRequestTime { get; set; }
+        public bool SessionClosed => mSessionClosed;
         string mChallenge { get; set; } = "";
-
         object mLock = new object();
         object mLockZip = new object();
         bool mAuthenticated;
-        long mSequence;
-        Dictionary<long, FrameInfo> mHistory = new Dictionary<long, FrameInfo>();
+        bool mSessionClosed;
 
         double mScreenScale = 1;
-        FrameCollector mCollectorXhr = new FrameCollector();
         Queue<FrameCollector> mCollectors = new Queue<FrameCollector>(new FrameCollector[] { new FrameCollector(), new FrameCollector() });
         Queue<CollectRequest> mCollectRequests = new Queue<CollectRequest>();
 
@@ -144,7 +141,6 @@ namespace Gosub.Viewtop
         /// </summary>
         public async Task ProcessWebRemoteViewerRequestAsync(HttpContext context)
         {
-            LastRequestTime = DateTime.Now;
             var request = context.Request;
             var response = context.Response;
             var queryString = request.Query;
@@ -162,13 +158,6 @@ namespace Gosub.Viewtop
             {
                 // Send session id, password salt, and challenge
                 await context.SendResponseAsync(GetChallenge(request.Query.Get("username")), 200);
-                return;
-            }
-
-            if (query == "login")
-            {
-                // Authenticate user, sets mAuthenticated to true if they got in
-                await context.SendResponseAsync(JsonConvert.SerializeObject(Authenticate(request.Query.Get("username"), request.Query.Get("hash"))), 200);
                 return;
             }
 
@@ -198,30 +187,6 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            // --- Everything below this requires a sequence number
-            if (!long.TryParse(queryString.Get("seq"), out long sequence))
-            {
-                await ViewtopServer.SendJsonErrorAsync(context, "Query must have a sequence number called 'seq', and must it must be numeric");
-                return;
-            }
-
-            if (query == "draw")
-            {
-                UpdateMousePositionFromDrawQuery(request);
-                if (WaitForImageOrTimeoutXhr(sequence, out FrameInfo frame, context.Request.Query))
-                    await context.SendResponseAsync(JsonConvert.SerializeObject(frame), 200);
-                else
-                    await ViewtopServer.SendJsonErrorAsync(context, "Error retrieving draw frame " + sequence);
-                return;
-            }
-
-            if (query == "events")
-            {
-                int maxLength = 64000;
-                string json = mUtf8.GetString(await context.ReadContentAsync(maxLength));
-                ProcessRemoteEvents(JsonConvert.DeserializeObject<RemoteEvents>(json).Events);
-                return;
-            }
             await ViewtopServer.SendJsonErrorAsync(context, "ERROR: Invalid query name - " + query);
         }
 
@@ -273,6 +238,17 @@ namespace Gosub.Viewtop
                     if (request.DrawRequest != null)
                         await EnqueueCollectRequestAsync(websocket, request);
                 }
+            }
+            // Close session
+            mAuthenticated = false;
+            mSessionClosed = true;
+            while (mCollectors.Count != 0)
+                mCollectors.Dequeue().Dispose();
+            while (mCollectRequests.Count != 0)
+            {
+                var request = mCollectRequests.Dequeue();
+                await request.Task;
+                request.Collector.Dispose();
             }
         }
 
@@ -368,17 +344,6 @@ namespace Gosub.Viewtop
             return loginInfo;
         }
 
-        void UpdateMousePositionFromDrawQuery(HttpRequest request)
-        {
-            var queryString = request.Query;
-            if (long.TryParse(queryString.Get("t"), out long time)
-                && int.TryParse(queryString.Get("x"), out int x)
-                && int.TryParse(queryString.Get("y"), out int y))
-            {
-                mEvents.SetMousePosition(time, 1 / mScreenScale, x, y, false);
-            }
-        }
-
         private void ProcessRemoteEvents(RemoteEvent []events)
         {
             if (events == null)
@@ -412,66 +377,6 @@ namespace Gosub.Viewtop
             }
         }
 
-        /// <summary>
-        /// Retrieve the requested frame via xhr (i.e. order frames and use cache)
-        /// </summary>
-        bool WaitForImageOrTimeoutXhr(long sequence, out FrameInfo frame, HttpQuery queryString)
-        {
-            // If a future frame is receivied, wait for it or timeout.
-            DateTime now = DateTime.Now;
-            while (true)
-            {
-                lock (mLock)
-                {
-                    // Return old frames from history
-                    if (mHistory.TryGetValue(sequence, out frame))
-                    {
-                        return true;
-                    }
-                    // Break to allow the current frame to be processed
-                    if (sequence <= mSequence + 1)
-                        break;
-                }
-                // Fail if the frame isn't ready within the long poll timeout
-                if ((DateTime.Now - now).TotalSeconds > FUTURE_FRAME_TIMEOUT_SEC)
-                    return false;
-                Thread.Sleep(10);
-            }
-
-            // Collect a new frame.  Future frames and image frames are queued above
-            lock (mLock)
-            {
-                // Generate an error for very old frames
-                if (sequence <= mSequence)
-                {
-                    // TBD: How much history do we need (depends on Javascript queueing and latency)?
-                    Debug.Assert(false);
-                    return false;
-                }
-                // We received a request for the next frame, which we don't have yet.
-                // NOTE: Old requests were either satisified from history or timed out.
-                //       Future requests were queued above.  The only way to get here 
-                //       is when requesting the next frame
-                Debug.Assert(sequence == mSequence + 1);
-                mSequence++;
-
-                // Generate the frame
-                int.TryParse(queryString.Get("maxwidth"), out int maxWidth);
-                int.TryParse(queryString.Get("maxheight"), out int maxHeight);
-                frame = new FrameInfo();
-                mCollectorXhr.CopyScreen(maxWidth, maxHeight);
-                mScreenScale = mCollectorXhr.Scale;
-                GetFrame(mCollectorXhr, queryString, frame);
-                GetClipInfo(frame);
-
-                // Save the frame in history and delete old frames
-                mHistory[sequence] = frame;
-                mHistory.Remove(sequence - HISTORY_FRAMES);
-                mHistory.Remove(sequence - HISTORY_FRAMES - 1);
-                Debug.Assert(mHistory.Count <= HISTORY_FRAMES);
-                return true;
-            }
-        }
 
         void GetFrame(FrameCollector collector, HttpQuery queryString, FrameInfo frame)
         {

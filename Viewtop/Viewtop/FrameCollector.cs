@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 
 namespace Gosub.Viewtop
 {
-    class FrameCollector
+    class FrameCollector : IDisposable
     {
         bool mIsScaledScreen;
         Bitmap mFullScreen;
@@ -19,6 +19,16 @@ namespace Gosub.Viewtop
         public TimeSpan ShrinkTime { get; set; }
         public double Scale { get { return mScale; }  }
         public Bitmap Screen => mIsScaledScreen ? mScaledScreen : mFullScreen;
+
+        public void Dispose()
+        {
+            if (mFullScreen != null)
+                mFullScreen.Dispose();
+            mFullScreen = null;
+            if (mScaledScreen != null)
+                mScaledScreen.Dispose();
+            mScaledScreen = null;
+        }
 
         /// <summary>
         /// Create a copy of the screen with a maximum width and height.
