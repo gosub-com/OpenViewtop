@@ -9,13 +9,12 @@
 //
 // Main remote viewer class, used to continuosly update the canvas.
 //
-function Viewtop(drawString, canvas)
+function Viewtop(canvas)
 {
     var THIS = this;
-
     var EVENTS_LOOP_TIME_MS = 7;
+    var MOUSE_MOVE_TIME_MS = 25;
 
-    var mDrawString = drawString;
     var mCanvas = canvas;
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
@@ -24,6 +23,7 @@ function Viewtop(drawString, canvas)
     var mPassword = "";
 
     var mMouseMoveTime = 0;
+    var mMouseMoveSendTime = 0;
     var mMouseX = 0;
     var mMouseY = 0;
     var mKeyAndMouseEvents = [];
@@ -38,26 +38,6 @@ function Viewtop(drawString, canvas)
 
     var mDrawSequence = 1;
     var mDrawQueue = {};
-
-    // Round trip time
-    var mRtt = 400;
-    var mRttSkipsInARow = 0;
-    var RTT_MAX = 1200;
-    var RTT_MIN = 25;
-    var RTT_COEFFICIENT = 0.2;
-    var RTT_TRIGGER_RATIO = 0.5;  // Trigger at middle of RTT
-    var RTT_TRIGGER_MIN_MS = 40;  // Trigger a bit before middle of RTT
-
-    function SetRtt(rtt)
-    {
-        // Ignore net lag hiccups, which usually come in pairs because of double buffering
-        if (rtt > 1.6*mRtt && mRttSkipsInARow++ < 2)
-            return;
-        mRttSkipsInARow = 0;
-
-        // Butterworth filter
-        mRtt = Math.min(Math.max(rtt, RTT_MIN), RTT_MAX) * RTT_COEFFICIENT + (1 - RTT_COEFFICIENT) * mRtt;
-    }
 
 
     // Set draw options (each separated by '&')
@@ -88,13 +68,11 @@ function Viewtop(drawString, canvas)
         StopInternal();
     }
 
-    // Called when the session ends because of an error
-    this.ErrorCallback = function(errorMessage)
-    {
-    }
+    this.ErrorCallback = function(errorMessage) { }
+    this.GotFrameCallback = function () { }
 
     this.ClipboardButton = {};
-    this.ComputerNameLabel = {};
+    this.FrameStats = {}
 
     function StopInternal()
     {
@@ -232,6 +210,25 @@ function Viewtop(drawString, canvas)
         mWebSocket.onmessage = function (e) { OnViewtopMessageWs(e); }
     }
 
+    // Round trip time
+    var mRtt = 400;
+    var mRttSkipsInARow = 0;
+    var RTT_MAX = 1200;
+    var RTT_MIN = 25;
+    var RTT_COEFFICIENT = 0.2;
+    var RTT_TRIGGER_RATIO = 0.5;  // Trigger at middle of RTT
+    var RTT_TRIGGER_MIN_MS = 40;  // Trigger a bit before middle of RTT
+
+    function SetRtt(rtt) {
+        // Ignore net lag hiccups, which usually come in pairs because of double buffering
+        if (rtt > 1.6 * mRtt && mRttSkipsInARow++ < 2)
+            return;
+        mRttSkipsInARow = 0;
+
+        // Butterworth filter
+        mRtt = Math.min(Math.max(rtt, RTT_MIN), RTT_MAX) * RTT_COEFFICIENT + (1 - RTT_COEFFICIENT) * mRtt;
+    }
+
     // Process incoming websocket messages
     function OnViewtopMessageWs(e)
     {
@@ -243,10 +240,6 @@ function Viewtop(drawString, canvas)
         if (m.Event == "Close")
         {
             ShowError(m.Message);
-        }
-        if (m.ComputerName !== undefined)
-        {
-            THIS.ComputerNameLabel.innerHTML = m.ComputerName;
         }
         if (m.Event == "Draw")
         {
@@ -284,6 +277,13 @@ function Viewtop(drawString, canvas)
             // (i.e. double buffer) to reduce the round trip time latency.  
             if (getsOutstanding == 1 && Date.now() - mGetSendTime > mRtt * RTT_TRIGGER_RATIO - RTT_TRIGGER_MIN_MS)
                 RequestFrameWs();
+
+            // Periodically send mouse move
+            if (mMouseMoveTime > mMouseMoveSendTime && mMouseMoveSendTime < Date.now() + MOUSE_MOVE_TIME_MS)
+            {
+                mKeyAndMouseEvents.push({ Event: "mousemove", Time: mMouseMoveTime, X: mMouseX, Y: mMouseY, });
+                mMouseMoveSendTime = Date.now();
+            }
 
             // Send mouse and keyboard events
             if (mKeyAndMouseEvents.length != 0)
@@ -324,14 +324,7 @@ function Viewtop(drawString, canvas)
                 MaxWidth: width,
                 MaxHeight: height,
                 Options: THIS.DrawOptions // Extra options
-            },
-            Events:
-            [{
-                Event: "mousemove",
-                Time: mGetSendTime,
-                X: mMouseX,
-                Y: mMouseY,
-            }]
+            }
         };
         mWebSocket.send(JSON.stringify(event));
     }
@@ -443,14 +436,10 @@ function Viewtop(drawString, canvas)
         for (var i = 0; i < frames.length; i++)
             DrawFrame(frames[i].LoadedImage, frames[i].Draw);
 
-        // Show stats
-        var stats = drawBuffer.Stats;
-        stats.FPS = mFps;
-        var statsStr = "";
-        for (var key in stats)
-            if (stats.hasOwnProperty(key))
-                statsStr += key + ": " + stats[key] + "<br>";
-        mDrawString.innerHTML = statsStr;
+        // Signal got a frame
+        THIS.FrameStats = drawBuffer.Stats;
+        THIS.FrameStats.FPS = mFps;
+        THIS.GotFrameCallback();
     }
 
     function HttpGet(url, onreadystatechangefunction)
@@ -480,7 +469,6 @@ function Viewtop(drawString, canvas)
 
     function InitializeCanvas()
     {
-        mDrawString.innerHTML = "Starting...";
         mContext.fillStyle = '#228';
         mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
         mContext.fillStyle = '#fff';
@@ -490,7 +478,6 @@ function Viewtop(drawString, canvas)
 
     function ShowError(errorMessage)
     {
-        mDrawString.innerHTML = 'ERROR: ' + errorMessage;
         mContext.fillStyle = '#000';
         mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
         mContext.font = '26px sans-serif';

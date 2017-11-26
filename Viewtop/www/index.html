@@ -1,16 +1,21 @@
 <!DOCTYPE html>
-<!-- Copyright (C) 2016 by Jeremy Spiller, all rights reserved. -->
+<!-- Copyright (C) 2017 by Jeremy Spiller, all rights reserved. -->
 <html>
 <head>
     <meta content="text/html;charset=utf-8" http-equiv="Content-Type">
     <meta content="utf-8" http-equiv="encoding">
     <script type="text/javascript" src="Sha256.js"></script>
     <script type="text/javascript" src="Viewtop.js"></script>
-    <style>
+    <script type="text/javascript" src="vue.min.js"></script>
+
+<style>
+
+[v-cloak] { display: none; }
 
 body { background: lavender;}
-
 h1 { color: darkblue;}
+h2 { color: darkblue;}
+h3 { color: darkblue;}
 
 .button 
 {
@@ -39,15 +44,33 @@ button::-moz-focus-inner
     margin-top:-1px; 
 	margin-bottom: 0;
 }
+    table, th, td {
+        border: 1px solid black;
+        border-collapse: collapse;
+        padding: 5px;
+        border-color: #8DC8F6;
+    }
+    th, td {
+        text-align: left;
 
-
-    </style>
+    }
+    table {
+        border-spacing: 5px;
+    }
+</style>
 </head>
+
+
 <body>
+<div id="app">
     <!-- Login form -->
     <div id="remoteLoginPageId">
-        <h1>Welcome to Open Viewtop</h1>
-        <h3>Log in to ComputerName</h3>
+        <h1>Open Viewtop</h1>
+        <p>
+            <b>Name:</b> <span v-cloak>{{Local.Name}} <b>[{{Local.ComputerName}}]</b></span><br />
+            <b>Local IP:</b> <span v-cloak v-for="(ip, index) in Local.LocalIps">{{ip}}<span v-if="index < Local.LocalIps.length - 1">,&nbsp;</span></span><br />
+            <b>Public IP:</b> <span v-cloak>{{Local.PublicIp}}</span><br />
+        </p>
         <div style="display:inline-block;margin-right:10px;">
             <div><b>Username: </b></div>
             <input id="usernameId" type="text" placeholder="Enter Username" name="uname" autofocus
@@ -56,7 +79,7 @@ button::-moz-focus-inner
         <div style="display:inline-block;margin-right:10px;">
             <div><b>Password: </b></div>
             <input id="passwordId" type="password" placeholder="Enter Password" name="password"
-                   onkeypress="Javascript: if (event.keyCode == 13) Login();">            
+                   onkeypress="Javascript: if (event.keyCode == 13) Login();">
         </div>
         <div style="display:inline-block">
             <button class="button" type="button" onclick="Login()">Log In</button>
@@ -67,67 +90,143 @@ button::-moz-focus-inner
         <div id="unsecureWarningId" style="display:none;">
             <b style="color:red;">Warning:</b> This connection is running over HTTP and is unsecure
         </div>
+        <div>
+            <h2>Other computers on the network</h2>
+            <span v-cloak v-if="Remotes.length==0">None</span>
+            <table v-cloak v-if="Remotes.length!=0">
+                <tr>
+                    <th>Name</th>
+                    <th>Computer Name</th>
+                    <th>IP Address</th>
+                    <th colspan="2">Link</th>
+                    <th>Status</th>
+                </tr>
+                <tr v-cloak v-for="remote in Remotes">
+                    <td>{{remote.Name}}</td>
+                    <td>{{remote.ComputerName}}</td>
+                    <td>{{remote.LocalIp}}</td>
+                    <td><a v-bind:href="'https://' + remote.LocalIp + ':' + remote.HttpsPort">HTTPS</a></td>
+                    <td><a v-bind:href="'http://' + remote.LocalIp + ':' + remote.HttpPort">HTTP</a></td>
+                    <td>{{remote.Status}}</td>
+                </tr>
+            </table>
+        </div>
     </div>
 
-    <div id="remoteConnectedPageId" style="display:none" >
-        
+    <div id="remoteConnectedPageId" style="display:none">
+
         <!-- Top connected bar -->
         <div style="margin: 0px 0px 2px 0px;">
             <button class="button" type="button" onclick="Logout()">Log Out</button>
             <button class="button" type="button" onclick="FullScreen()" title="Full Screen">[ ]</button>
             <a class="button" id="clipboardId">Clipboard</a>
-            <b id="computerNameId" style="float:right;margin-right:4px;">(unknown)</b>
+            <b id="computerNameId" style="float:right;margin-right:4px;">{{Local.ComputerName}}</b>
         </div>
 
         <!-- Main Screen-->
         <canvas id="remoteCanvasId" tabindex="1">
-        Canvas not available.  Please upgrade your browser.
+            Canvas not available.  Please upgrade your browser.
         </canvas>
 
         <!-- Stats and options -->
         <table id="remoteOptionsId" style="display:block">
-            <tr>
+            <tr>                   
                 <td>
-                    <label><input type="checkbox" id="checkFullFrame" onchange="UpdateOptions()">Disable delta compression</label>
+                    <label><input type="checkbox" v-model="CheckFullFrame">Disable delta compression</label>
                     <br /> <br />
-                    <label><input type="radio" name="compression" id="radioSmartPng" checked="checked" onchange="UpdateOptions()">Smart PNG</label>
+                    <label><input type="radio" v-model="RadioCompression" value="">Smart PNG</label>
                     <br />
-                    <label><input type="radio" name="compression" id="radioJpg" onchange="UpdateOptions()">Compress JPG</label>
+                    <label><input type="radio" v-model="RadioCompression" value="jpg">Compress JPG</label>
                     <br />
-                    <label><input type="radio" name="compression" id="radioPng" onchange="UpdateOptions()">Compress PNG</label>
-                    <br />
-                </td>
-                <td>
-                    <label><input type="radio" name="output" id="radioNormal" checked="checked" onchange="UpdateOptions()">Normal</label>
-                    <br />
-                    <label><input type="radio" name="output" id="radioFullFrameJpg" onchange="UpdateOptions()">Full frame JPG</label>
-                    <br />
-                    <label><input type="radio" name="output" id="radioFullFramePng" onchange="UpdateOptions()">Full frame PNG</label>
-                    <br />
-                    <label><input type="radio" name="output" id="radioCompressionMap" onchange="UpdateOptions()">Compression map</label>
-                    <br />
-                    <label><input type="radio" name="output" id="radioHideJpg" onchange="UpdateOptions()">Hide JPG</label>
-                    <br />
-                    <label><input type="radio" name="output" id="radioHidePng" onchange="UpdateOptions()">Hide PNG</label>
+                    <label><input type="radio" v-model="RadioCompression" value="png">Compress PNG</label>
                     <br />
                 </td>
                 <td>
-                    <p id="remoteStatsId">Draw string</p>
+                    <label><input type="radio" v-model="RadioOutput" value="">Normal</label>
+                    <br />
+                    <label><input type="radio" v-model="RadioOutput" value="FullFrameJpg">Full frame JPG</label>
+                    <br />
+                    <label><input type="radio" v-model="RadioOutput" value="FullFramePng">Full frame PNG</label>
+                    <br />
+                    <label><input type="radio" v-model="RadioOutput" value="CompressionMap">Compression map</label>
+                    <br />
+                    <label><input type="radio" v-model="RadioOutput" value="HideJpg">Hide JPG</label>
+                    <br />
+                    <label><input type="radio" v-model="RadioOutput" value="HidePng">Hide PNG</label>
+                    <br />
+                </td>
+                <td>
+                    <span v-cloak v-for="(stat, index) in FrameStats">{{index}}:{{stat}}<br /></span>
                 </td>
             </tr>
         </table>
     </div>
+</div>
 </body>
 </html>
 
+
+
 <script>
+
+    var app = new Vue({
+        el: '#app',
+        data: {
+            Local: {
+                ComputerName: 'LOADING...',
+                Name: '',
+                LocalIp: '',
+                PublicIp: ''
+            },
+            Remotes: [],
+
+            CheckFullFrame: false,
+            RadioCompression: "",
+            RadioOutput: "",
+
+            FrameStats: {},
+        },
+        watch: {
+            CheckFullFrame: function () { UpdateOptions(); },
+            RadioCompression: function () { UpdateOptions(); },
+            RadioOutput: function () { UpdateOptions(); }
+        }
+    });
+
+    function HttpGet(url, onreadystatechangefunction)
+    {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = onreadystatechangefunction;
+        xhttp.open("GET", url, true);
+        xhttp.send();
+    }
+
+    function PollServerInfo()
+    {
+        HttpGet("openviewtop.ovt?query=info",
+        function ()
+        {
+            if (this.readyState != 4)
+                return;
+            setTimeout(PollServerInfo, 1000);
+            if (this.status != 200)
+            {
+                app.Local.ComputerName = "[ERROR LOADING...]";
+                return;
+            }
+            var info = JSON.parse(this.responseText);
+            app.Local = info.Local;
+            app.Remotes = info.Remotes;
+        });
+    }
+    PollServerInfo();
+
 
     var mViewer = null;
     var mRemoteLoginPage = document.getElementById('remoteLoginPageId');
     var mRemoteConnectedPage = document.getElementById('remoteConnectedPageId');
     var mRemoteCanvas = document.getElementById('remoteCanvasId');
     var mRemoteOptions = document.getElementById('remoteOptionsId');
-    var mRemoteStats = document.getElementById('remoteStatsId');
     var mUsername = document.getElementById('usernameId');
     var mPassword = document.getElementById('passwordId');
     var mErrorMessage = document.getElementById('errorMessageId');
@@ -142,15 +241,20 @@ button::-moz-focus-inner
         mRemoteLoginPage.style.display = "none";
         mRemoteConnectedPage.style.display = "block";
 
-        mViewer = new Viewtop(mRemoteStats, mRemoteCanvas);
+        mViewer = new Viewtop(mRemoteCanvas);
         mViewer.ErrorCallback = function(errorMessage)
         {
             Logout();
             mErrorMessage.innerHTML = "<b>ERROR:</b> " + errorMessage;
             mErrorMessage.style.display = "block";
+            app.FrameStats = {};
         }
+        mViewer.GotFrameCallback = function ()
+        {
+            app.FrameStats = mViewer.FrameStats;
+        }
+
         mViewer.ClipboardButton = document.getElementById('clipboardId');
-        mViewer.ComputerNameLabel = document.getElementById('computerNameId');
         UpdateOptions();
         mViewer.Start(mUsername.value, mPassword.value);
     }
@@ -181,28 +285,16 @@ button::-moz-focus-inner
     {
         // Check boxes
         var options = "&";
-        if (document.getElementById('checkFullFrame').checked)
+        if (app.CheckFullFrame)
             options += "fullframe=true&";
 
         // Compression type radio buttons
-        if (document.getElementById('radioJpg').checked)
-            options += "compression=jpg&";
-        else if (document.getElementById('radioPng').checked)
-            options += "compression=png&";
-        else if (document.getElementById('radioSmartPng').checked)
-            options += "compression=smartpng&";
-
+        if (app.RadioCompression != "")
+            options += "compression=" + app.RadioCompression + "&";
+ 
         // Output type radio button
-        if (document.getElementById('radioFullFrameJpg').checked)
-            options += "output=FullFrameJpg&";
-        else if (document.getElementById('radioFullFramePng').checked)
-            options += "output=FullFramePng&";
-        else if (document.getElementById('radioCompressionMap').checked)
-            options += "output=CompressionMap&";
-        else if (document.getElementById('radioHideJpg').checked)
-            options += "output=HideJpg&";
-        else if (document.getElementById('radioHidePng').checked)
-            options += "output=HidePng&";
+        if (app.RadioOutput != "")
+            options += "output=" + app.RadioOutput + "&";
 
         mViewer.DrawOptions = options;
         console.log("Options=" + options);

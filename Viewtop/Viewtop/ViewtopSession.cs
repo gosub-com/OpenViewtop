@@ -19,13 +19,6 @@ namespace Gosub.Viewtop
 {
     class ViewtopSession
     {
-        // Debug - Add latency to test link
-        public static int sSimulatedLatencyMs = 0;
-        public static int sSimulatedJitterMs = 0;
-        static Random sRandom = new Random();
-
-        const int FUTURE_FRAME_TIMEOUT_SEC = 5; // Allow up to 5 seconds before cancelling a request
-        const int HISTORY_FRAMES = 2; // Save old frames for repeated requests
         const int MAX_FILE_COUNT = 100;
 
         public long SessionId { get; }
@@ -168,14 +161,6 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            // Simulate latency and jitter
-            if (sSimulatedLatencyMs != 0 || sSimulatedJitterMs != 0)
-            {
-                int latencyMs = sRandom.Next(sSimulatedJitterMs) + sSimulatedLatencyMs;
-                if (latencyMs != 0)
-                    Thread.Sleep(latencyMs);
-            }
-
             if (query == "clip")
             {
                 if (!mClip.EverChanged)
@@ -193,6 +178,36 @@ namespace Gosub.Viewtop
         async Task HandleWebSocketRequest(HttpContext context)
         {
             var websocket = await context.AcceptWebSocketAsync("viewtop");
+            try
+            {
+                await TryHandleWebSocketRequest(websocket);
+                if (websocket.State == WebSocketState.Open || websocket.State == WebSocketState.CloseReceived)
+                    await websocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "End of session", CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                if (websocket.State == WebSocketState.Open || websocket.State == WebSocketState.CloseReceived)
+                    await websocket.CloseAsync(WebSocketCloseStatus.InternalServerError, ex.Message, CancellationToken.None);
+                throw;
+            }
+            finally
+            {
+                // Close session
+                mAuthenticated = false;
+                mSessionClosed = true;
+                while (mCollectors.Count != 0)
+                    mCollectors.Dequeue().Dispose();
+                while (mCollectRequests.Count != 0)
+                {
+                    var request = mCollectRequests.Dequeue();
+                    await request.Task;
+                    request.Collector.Dispose();
+                }
+            }
+        }
+
+        async Task TryHandleWebSocketRequest(WebSocket websocket)
+        {
 
             // Read login (startsession was called via XHR, and now we expect username and password)
             await websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
@@ -238,17 +253,6 @@ namespace Gosub.Viewtop
                     if (request.DrawRequest != null)
                         await EnqueueCollectRequestAsync(websocket, request);
                 }
-            }
-            // Close session
-            mAuthenticated = false;
-            mSessionClosed = true;
-            while (mCollectors.Count != 0)
-                mCollectors.Dequeue().Dispose();
-            while (mCollectRequests.Count != 0)
-            {
-                var request = mCollectRequests.Dequeue();
-                await request.Task;
-                request.Collector.Dispose();
             }
         }
 

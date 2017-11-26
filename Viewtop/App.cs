@@ -9,6 +9,6 @@ namespace Gosub.Viewtop
     class App
     {
         public const string Name = "Open Viewtop";
-        public const string Version = "0.0.8";
+        public const string Version = "0.0.12";
     }
 }

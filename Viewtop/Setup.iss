@@ -1,8 +1,8 @@
 ﻿[Setup]
 AppName=Open Viewtop
-AppVersion=0.0.8
+AppVersion=0.0.12
 OutputDir=.
-OutputBaseFilename=SetupOpenViewtop-0.0.8
+OutputBaseFilename=SetupOpenViewtop-0.0.12
 UsePreviousAppDir=false
 UsePreviousGroup=false
 DefaultDirName={pf}\Gosub\Open Viewtop
@@ -21,6 +21,9 @@ Source: "Mono.Security.dll"; DestDir: "{app}"; flags:ignoreversion
 [Icons]
 Name: "{group}\Open Viewtop"; Filename: "{app}\Gosub.Viewtop.exe"
 Name: "{group}\Uninstall Open Viewtop"; Filename: "{uninstallexe}"
+
+[Run]
+FileName: "{app}\Gosub.Viewtop.exe"; Flags: Postinstall
 
 
 [Code]

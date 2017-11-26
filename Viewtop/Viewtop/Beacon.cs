@@ -200,6 +200,14 @@ namespace Gosub.Viewtop
             }
         }
 
+        /// <summary>
+        /// Ping a computer directly
+        /// </summary>
+        public void Ping(IPAddress ip)
+        {
+            SendResponse(mSocketUnicast, new IPEndPoint(ip, BROADCAST_PORT), State.Broadcast);
+        }
+
         private void NetworkChange_NetworkAvailabilityChanged(object sender, NetworkAvailabilityEventArgs e)
         {
             mBroadcastAddresses = null;
@@ -351,7 +359,6 @@ namespace Gosub.Viewtop
                 PeerConnectionEstablishedChanged?.Invoke(peer);
             }
         }
-
         void SendResponse(Socket socket, IPEndPoint ep, State state)
         {
             try

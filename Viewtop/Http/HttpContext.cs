@@ -8,6 +8,7 @@ using System.Net.Sockets;
 using System.Net.Security;
 using System.Security.Cryptography;
 using System.Threading;
+using System.Net;
 
 namespace Gosub.Http
 {
@@ -49,6 +50,7 @@ namespace Gosub.Http
 
         public HttpRequest Request => mRequest;
         public HttpResponse Response => mResponse;
+        public EndPoint RemoteEndPoint => mTcpClient.Client.RemoteEndPoint;
 
         /// <summary>
         /// Set the HTTP response header and return the input stream.  

@@ -88,5 +88,13 @@ namespace Gosub.Http
                     await WriteAsync(buffer, 0, length);
             }
         }
+
+        public async Task FlushAsync()
+        {
+            if (mSync)
+                mStream.Flush();
+            else
+                await mStream.FlushAsync();
+        }
     }
 }

@@ -19,19 +19,21 @@ namespace Gosub.Viewtop
         const int HTTPS_PORT = 8152;
         const string BROADCAST_HEADER = "OVT:";
 
-        const int PURGE_PEER_AFTER_EXIT_MS = 3000;
-        const int PURGE_PEER_LOST_CONNECTION_MS = 8000;
+        const int PURGE_PEER_AFTER_EXIT_MS = 6000;
+        const int PURGE_PEER_LOST_CONNECTION_MS = 10000;
         const int PROBLEM_PEER_TIME_MS = 3000;
 
         HttpServer mHttpServer;
         HttpServer mHttpsServer;
 
-        ViewtopServer mOvtServer;
+        ViewtopServer mOvtServer = new ViewtopServer();
         Beacon mBeacon = new Beacon();
         PeerInfo mPeerInfo = new PeerInfo();
         Settings mSettings = new Settings();
 
+        // This is only used to track peer indices.  TBD: The beacon could do this for us
         List<string> mPeers = new List<string>();
+        List<ViewtopServer.ComputerInfo> mRemotes = new List<ViewtopServer.ComputerInfo>(); // Track with mPeers index and gridRemote
 
         class PeerInfo : Beacon.Info
         {
@@ -51,10 +53,6 @@ namespace Gosub.Viewtop
             Text = App.Name + ", version " + App.Version;
             MouseAndKeyboard.MainForm = this;
             Clip.MainForm = this;
-            comboLatency.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
-            comboLatency.SelectedIndex = 0;
-            comboJitter.Items.AddRange(new object[] { 0, 100, 200, 500, 1000 });
-            comboJitter.SelectedIndex = 0;
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
@@ -240,12 +238,20 @@ namespace Gosub.Viewtop
             catch { }
             if (machineName.Trim() == "")
                 machineName = "localhost";
+            if (mSettings.Name.Trim() == "")
+            {
+                mSettings.Name = machineName;
+                textName.Text = machineName;
+            }
 
             labelSecureLink.Text = "Starting...";
             Refresh();
 
 
             mOvtServer = new ViewtopServer();
+            mOvtServer.LocalComputerInfo.ComputerName = machineName;
+            mOvtServer.LocalComputerInfo.Name = mSettings.Name;
+
             try
             {
                 // Setup HTTP server
@@ -253,32 +259,33 @@ namespace Gosub.Viewtop
                 mHttpServer = new HttpServer();
                 mHttpServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT),
                     (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); });
+                mOvtServer.LocalComputerInfo.HttpPort = HTTP_PORT.ToString();
 
                 // Setup HTTPS server
                 mHttpsServer = new HttpServer();
                 mHttpsServer.UseSsl(certificate);
                 mHttpsServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT),
                     (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); });
+                mOvtServer.LocalComputerInfo.HttpsPort = HTTPS_PORT.ToString();
             }
             catch (Exception ex)
             {
                 try { mHttpServer.Stop(); } catch { }
                 try { mHttpsServer.Stop(); } catch { }
-                mOvtServer = null;
                 MessageBox.Show(this, "Error starting web server: " + ex.Message, App.Name);
                 labelSecureLink.Text = "Error starting server";
                 return;
             }
 
             string link = "https://" + machineName + ":" + HTTPS_PORT;
-            string text = "Secure: ";
+            string text = "";
             labelSecureLink.Text = text + link;
             labelSecureLink.Links.Clear();
             labelSecureLink.Links.Add(text.Length, link.Length, link);
             labelSecureLink.Enabled = true;
 
             link = "http://" + machineName + ":" + HTTP_PORT;
-            text = "Unsecure: ";
+            text = "";
             labelUnsecureLink.Text = text + link;
             labelUnsecureLink.Links.Clear();
             labelUnsecureLink.Links.Add(text.Length, link.Length, link);
@@ -287,6 +294,30 @@ namespace Gosub.Viewtop
             buttonStop.Enabled = true;
             buttonStart.Enabled = false;
 
+            GetPublicIpAddress();
+
+        }
+
+        async void GetPublicIpAddress()
+        {
+            try
+            {
+                using (var http = new System.Net.Http.HttpClient())
+                {
+                    var page = await http.GetStringAsync("http://ip4.me");
+                    var regex = new System.Text.RegularExpressions.Regex(@"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b");
+                    var match = regex.Match(page);
+                    if (match.Success)
+                    {
+                        labelPublicIpAddress.Text = "Public IP address: " + match.Value;
+                        mOvtServer.LocalComputerInfo.PublicIp = match.Value;
+                    }
+                }
+            }
+            catch
+            {
+                labelPublicIpAddress.Text = "Could not obtain public IP address";
+            }
         }
 
         void StopWebServer()
@@ -297,7 +328,7 @@ namespace Gosub.Viewtop
                 mHttpsServer.Stop();
             mHttpServer = null;
             mHttpsServer = null;
-            mOvtServer = null;
+            mOvtServer = new ViewtopServer();
 
             labelSecureLink.Text = "Web Server stopped";
             labelSecureLink.Enabled = false;
@@ -334,18 +365,6 @@ namespace Gosub.Viewtop
                 MessageBox.Show(this, "Error setting up secure link.  Your HTTPS connection may not work.  \r\n\r\n" + ex.Message, App.Name);
             }
             return null;
-        }
-
-        private void comboLatency_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (comboLatency.SelectedIndex >= 0)
-                ViewtopSession.sSimulatedLatencyMs = (int)comboLatency.Items[comboLatency.SelectedIndex];
-        }
-
-        private void comboJitter_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (comboJitter.SelectedIndex >= 0)
-                ViewtopSession.sSimulatedJitterMs = (int)comboJitter.Items[comboJitter.SelectedIndex];
         }
 
         private void listUsers_SelectedIndexChanged(object sender, EventArgs e)
@@ -402,6 +421,7 @@ namespace Gosub.Viewtop
         {
             mPeerInfo.Name = textName.Text;
             mSettings.Name = textName.Text;
+            mOvtServer.LocalComputerInfo.Name = textName.Text;
         }
 
         private void textName_Leave(object sender, EventArgs e)
@@ -418,7 +438,8 @@ namespace Gosub.Viewtop
 
             // Add row to grid
             mPeers.Add(peer.Key);
-            gridRemote.Rows.Add("", "", "");
+            gridRemote.Rows.Add("", "", "", "");
+            mRemotes.Add(new ViewtopServer.ComputerInfo());
             RefreshPeerGrid();
         }
         
@@ -431,6 +452,7 @@ namespace Gosub.Viewtop
                 return;
             mPeers.RemoveAt(index);
             gridRemote.Rows.RemoveAt(index);
+            mRemotes.RemoveAt(index);
         }
 
         private void mBeacon_PeerConnectionEstablishedChanged(Beacon.Peer peer)
@@ -443,14 +465,18 @@ namespace Gosub.Viewtop
             RefreshPeerGrid();
 
             // Display local IP address
+            List<string> ipAddressList = new List<string>();
             string ipAddresses = "";
             foreach (var ip in mBeacon.GetLocalAddresses())
             {
                 if (ipAddresses != "")
                     ipAddresses += ", ";
                 ipAddresses += ip.ToString();
+                ipAddressList.Add(ip.ToString());
             }
             labelLocalIpAddress.Text = "Local IP addresses: " + (ipAddresses == "" ? "(unknown)" : ipAddresses);
+            mOvtServer.LocalComputerInfo.LocalIp = ipAddressList.Count == 0 ? "" : ipAddressList[0];
+            mOvtServer.LocalComputerInfo.LocalIps = ipAddressList.ToArray();
         }
 
         private void RefreshPeerGrid()
@@ -504,20 +530,32 @@ namespace Gosub.Viewtop
                 string linkComputerName = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
                 string linkIpAddress = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
                 var name = info.Name.Trim() == "" ? "" : " (" + info.Name + ")";
-                gridRemote[0, rowIndex].Value = new GridLink(info.ComputerName + name, linkComputerName);
-                gridRemote[1, rowIndex].Value = new GridLink(peer.EndPoint.Address.ToString(), linkIpAddress);
-                gridRemote[2, rowIndex].Value = new GridLink(status, linkIpAddress);
+                gridRemote[0, rowIndex].Value = new GridLink(info.Name, linkComputerName);
+                gridRemote[1, rowIndex].Value = new GridLink(info.ComputerName, linkComputerName);
+                gridRemote[2, rowIndex].Value = new GridLink(peer.EndPoint.Address.ToString(), linkIpAddress);
+                gridRemote[3, rowIndex].Value = new GridLink(status, linkIpAddress);
                 gridRemote[0, rowIndex].Style.ForeColor = color;
                 gridRemote[1, rowIndex].Style.ForeColor = color;
                 gridRemote[2, rowIndex].Style.ForeColor = color;
+                gridRemote[3, rowIndex].Style.ForeColor = color;
+                var remote = mRemotes[rowIndex];
+                remote.Name = info.Name;
+                remote.ComputerName = info.ComputerName;
+                remote.LocalIp = peer.EndPoint.Address.ToString();
+                remote.HttpPort = info.HttpPort;
+                remote.HttpsPort = info.HttpsPort;
+                remote.Status = status;
             }
+            mOvtServer.RemoteComputerInfo = mRemotes.ToArray();
         }
 
-        private void gridRemote_CellContentClick(object sender, DataGridViewCellEventArgs e)
+        private void gridRemote_CellClick(object sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
             Process.Start(((GridLink)gridRemote[e.ColumnIndex, e.RowIndex].Value).Link);
+            while (gridRemote.SelectedRows.Count != 0)
+                gridRemote.SelectedRows[0].Selected = false;
         }
 
         private void buttonRefreshRemoteComputers_Click(object sender, EventArgs e)
@@ -527,6 +565,7 @@ namespace Gosub.Viewtop
             mPeers.Clear();
             gridRemote.Rows.Clear();
             StartBeacon();
+            GetPublicIpAddress();
         }
 
         /// <summary>

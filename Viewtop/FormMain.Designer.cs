@@ -33,11 +33,6 @@
             this.buttonStop = new System.Windows.Forms.Button();
             this.labelSecureLink = new System.Windows.Forms.LinkLabel();
             this.labelUnsecureLink = new System.Windows.Forms.LinkLabel();
-            this.groupBox1 = new System.Windows.Forms.GroupBox();
-            this.label2 = new System.Windows.Forms.Label();
-            this.label1 = new System.Windows.Forms.Label();
-            this.comboJitter = new System.Windows.Forms.ComboBox();
-            this.comboLatency = new System.Windows.Forms.ComboBox();
             this.listUsers = new System.Windows.Forms.ListBox();
             this.groupBox2 = new System.Windows.Forms.GroupBox();
             this.buttonChangePassword = new System.Windows.Forms.Button();
@@ -48,13 +43,13 @@
             this.label3 = new System.Windows.Forms.Label();
             this.timerUpdateRemoteGrid = new System.Windows.Forms.Timer(this.components);
             this.labelLocalIpAddress = new System.Windows.Forms.Label();
-            this.label4 = new System.Windows.Forms.Label();
             this.buttonRefreshRemoteComputers = new System.Windows.Forms.Button();
+            this.labelPublicIpAddress = new System.Windows.Forms.Label();
             this.gridRemote = new Gosub.Viewtop.GridWithoutAutoSelect();
             this.columnName = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.columnComputer = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnIp = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnStatus = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.groupBox1.SuspendLayout();
             this.groupBox2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.gridRemote)).BeginInit();
             this.SuspendLayout();
@@ -85,7 +80,7 @@
             // 
             this.labelSecureLink.AutoSize = true;
             this.labelSecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.labelSecureLink.Location = new System.Drawing.Point(174, 16);
+            this.labelSecureLink.Location = new System.Drawing.Point(176, 46);
             this.labelSecureLink.Name = "labelSecureLink";
             this.labelSecureLink.Size = new System.Drawing.Size(122, 20);
             this.labelSecureLink.TabIndex = 3;
@@ -96,65 +91,14 @@
             // labelUnsecureLink
             // 
             this.labelUnsecureLink.AutoSize = true;
-            this.labelUnsecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.labelUnsecureLink.Location = new System.Drawing.Point(175, 42);
+            this.labelUnsecureLink.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelUnsecureLink.Location = new System.Drawing.Point(175, 72);
             this.labelUnsecureLink.Name = "labelUnsecureLink";
-            this.labelUnsecureLink.Size = new System.Drawing.Size(95, 13);
+            this.labelUnsecureLink.Size = new System.Drawing.Size(140, 20);
             this.labelUnsecureLink.TabIndex = 5;
             this.labelUnsecureLink.TabStop = true;
             this.labelUnsecureLink.Text = "labelUnsecureLink";
             this.labelUnsecureLink.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.labelUnsecureLink_LinkClicked);
-            // 
-            // groupBox1
-            // 
-            this.groupBox1.Controls.Add(this.label2);
-            this.groupBox1.Controls.Add(this.label1);
-            this.groupBox1.Controls.Add(this.comboJitter);
-            this.groupBox1.Controls.Add(this.comboLatency);
-            this.groupBox1.Location = new System.Drawing.Point(13, 220);
-            this.groupBox1.Name = "groupBox1";
-            this.groupBox1.Size = new System.Drawing.Size(156, 74);
-            this.groupBox1.TabIndex = 6;
-            this.groupBox1.TabStop = false;
-            this.groupBox1.Text = "Simulated Network Delay:";
-            // 
-            // label2
-            // 
-            this.label2.AutoSize = true;
-            this.label2.Location = new System.Drawing.Point(33, 49);
-            this.label2.Name = "label2";
-            this.label2.Size = new System.Drawing.Size(32, 13);
-            this.label2.TabIndex = 9;
-            this.label2.Text = "Jitter:";
-            this.label2.TextAlign = System.Drawing.ContentAlignment.TopRight;
-            // 
-            // label1
-            // 
-            this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(17, 22);
-            this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(48, 13);
-            this.label1.TabIndex = 7;
-            this.label1.Text = "Latency:";
-            this.label1.TextAlign = System.Drawing.ContentAlignment.TopRight;
-            // 
-            // comboJitter
-            // 
-            this.comboJitter.FormattingEnabled = true;
-            this.comboJitter.Location = new System.Drawing.Point(71, 46);
-            this.comboJitter.Name = "comboJitter";
-            this.comboJitter.Size = new System.Drawing.Size(64, 21);
-            this.comboJitter.TabIndex = 8;
-            this.comboJitter.SelectedIndexChanged += new System.EventHandler(this.comboJitter_SelectedIndexChanged);
-            // 
-            // comboLatency
-            // 
-            this.comboLatency.FormattingEnabled = true;
-            this.comboLatency.Location = new System.Drawing.Point(71, 19);
-            this.comboLatency.Name = "comboLatency";
-            this.comboLatency.Size = new System.Drawing.Size(64, 21);
-            this.comboLatency.TabIndex = 7;
-            this.comboLatency.SelectedIndexChanged += new System.EventHandler(this.comboLatency_SelectedIndexChanged);
             // 
             // listUsers
             // 
@@ -219,9 +163,10 @@
             // 
             // textName
             // 
-            this.textName.Location = new System.Drawing.Point(219, 82);
+            this.textName.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.textName.Location = new System.Drawing.Point(237, 13);
             this.textName.Name = "textName";
-            this.textName.Size = new System.Drawing.Size(112, 20);
+            this.textName.Size = new System.Drawing.Size(453, 26);
             this.textName.TabIndex = 9;
             this.textName.TextChanged += new System.EventHandler(this.textName_TextChanged);
             this.textName.Leave += new System.EventHandler(this.textName_Leave);
@@ -229,9 +174,10 @@
             // label3
             // 
             this.label3.AutoSize = true;
-            this.label3.Location = new System.Drawing.Point(175, 85);
+            this.label3.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.label3.Location = new System.Drawing.Point(176, 16);
             this.label3.Name = "label3";
-            this.label3.Size = new System.Drawing.Size(38, 13);
+            this.label3.Size = new System.Drawing.Size(55, 20);
             this.label3.TabIndex = 10;
             this.label3.Text = "Name:";
             // 
@@ -244,32 +190,33 @@
             // labelLocalIpAddress
             // 
             this.labelLocalIpAddress.AutoSize = true;
-            this.labelLocalIpAddress.Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.labelLocalIpAddress.Location = new System.Drawing.Point(175, 62);
+            this.labelLocalIpAddress.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelLocalIpAddress.Location = new System.Drawing.Point(176, 101);
             this.labelLocalIpAddress.Name = "labelLocalIpAddress";
-            this.labelLocalIpAddress.Size = new System.Drawing.Size(142, 13);
+            this.labelLocalIpAddress.Size = new System.Drawing.Size(209, 20);
             this.labelLocalIpAddress.TabIndex = 12;
             this.labelLocalIpAddress.Text = "Local IP address: (unknown)";
             // 
-            // label4
-            // 
-            this.label4.AutoSize = true;
-            this.label4.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.label4.Location = new System.Drawing.Point(174, 105);
-            this.label4.Name = "label4";
-            this.label4.Size = new System.Drawing.Size(152, 20);
-            this.label4.TabIndex = 13;
-            this.label4.Text = "Remote Computers:";
-            // 
             // buttonRefreshRemoteComputers
             // 
-            this.buttonRefreshRemoteComputers.Location = new System.Drawing.Point(518, 99);
+            this.buttonRefreshRemoteComputers.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.buttonRefreshRemoteComputers.Location = new System.Drawing.Point(528, 133);
             this.buttonRefreshRemoteComputers.Name = "buttonRefreshRemoteComputers";
-            this.buttonRefreshRemoteComputers.Size = new System.Drawing.Size(75, 23);
+            this.buttonRefreshRemoteComputers.Size = new System.Drawing.Size(162, 29);
             this.buttonRefreshRemoteComputers.TabIndex = 15;
             this.buttonRefreshRemoteComputers.Text = "Refresh";
             this.buttonRefreshRemoteComputers.UseVisualStyleBackColor = true;
             this.buttonRefreshRemoteComputers.Click += new System.EventHandler(this.buttonRefreshRemoteComputers_Click);
+            // 
+            // labelPublicIpAddress
+            // 
+            this.labelPublicIpAddress.AutoSize = true;
+            this.labelPublicIpAddress.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.labelPublicIpAddress.Location = new System.Drawing.Point(176, 130);
+            this.labelPublicIpAddress.Name = "labelPublicIpAddress";
+            this.labelPublicIpAddress.Size = new System.Drawing.Size(213, 20);
+            this.labelPublicIpAddress.TabIndex = 16;
+            this.labelPublicIpAddress.Text = "Public IP address: (unknown)";
             // 
             // gridRemote
             // 
@@ -280,24 +227,31 @@
             this.gridRemote.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
             this.gridRemote.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
             this.columnName,
+            this.columnComputer,
             this.columnIp,
             this.columnStatus});
             this.gridRemote.EditMode = System.Windows.Forms.DataGridViewEditMode.EditProgrammatically;
             this.gridRemote.GridColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
-            this.gridRemote.Location = new System.Drawing.Point(178, 128);
+            this.gridRemote.Location = new System.Drawing.Point(180, 168);
             this.gridRemote.Name = "gridRemote";
             this.gridRemote.RowHeadersVisible = false;
             this.gridRemote.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
             this.gridRemote.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
-            this.gridRemote.Size = new System.Drawing.Size(415, 166);
+            this.gridRemote.Size = new System.Drawing.Size(510, 185);
             this.gridRemote.TabIndex = 11;
-            this.gridRemote.CellContentClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.gridRemote_CellContentClick);
+            this.gridRemote.CellClick += new System.Windows.Forms.DataGridViewCellEventHandler(this.gridRemote_CellClick);
             // 
             // columnName
             // 
             this.columnName.HeaderText = "Name";
             this.columnName.Name = "columnName";
             this.columnName.Width = 200;
+            // 
+            // columnComputer
+            // 
+            this.columnComputer.HeaderText = "Computer";
+            this.columnComputer.Name = "columnComputer";
+            this.columnComputer.Width = 120;
             // 
             // columnIp
             // 
@@ -314,15 +268,14 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(607, 306);
+            this.ClientSize = new System.Drawing.Size(702, 365);
+            this.Controls.Add(this.labelPublicIpAddress);
             this.Controls.Add(this.buttonRefreshRemoteComputers);
-            this.Controls.Add(this.label4);
             this.Controls.Add(this.labelLocalIpAddress);
             this.Controls.Add(this.gridRemote);
             this.Controls.Add(this.label3);
             this.Controls.Add(this.textName);
             this.Controls.Add(this.groupBox2);
-            this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.labelUnsecureLink);
             this.Controls.Add(this.labelSecureLink);
             this.Controls.Add(this.buttonStop);
@@ -332,8 +285,6 @@
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormMain_FormClosing);
             this.Load += new System.EventHandler(this.FormMain_Load);
             this.Shown += new System.EventHandler(this.FormMain_Shown);
-            this.groupBox1.ResumeLayout(false);
-            this.groupBox1.PerformLayout();
             this.groupBox2.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.gridRemote)).EndInit();
             this.ResumeLayout(false);
@@ -347,11 +298,6 @@
         private System.Windows.Forms.Button buttonStop;
         private System.Windows.Forms.LinkLabel labelSecureLink;
         private System.Windows.Forms.LinkLabel labelUnsecureLink;
-        private System.Windows.Forms.GroupBox groupBox1;
-        private System.Windows.Forms.ComboBox comboJitter;
-        private System.Windows.Forms.ComboBox comboLatency;
-        private System.Windows.Forms.Label label2;
-        private System.Windows.Forms.Label label1;
         private System.Windows.Forms.ListBox listUsers;
         private System.Windows.Forms.GroupBox groupBox2;
         private System.Windows.Forms.Button buttonChangePassword;
@@ -363,9 +309,10 @@
         private GridWithoutAutoSelect gridRemote;
         private System.Windows.Forms.Timer timerUpdateRemoteGrid;
         private System.Windows.Forms.Label labelLocalIpAddress;
-        private System.Windows.Forms.Label label4;
         private System.Windows.Forms.Button buttonRefreshRemoteComputers;
+        private System.Windows.Forms.Label labelPublicIpAddress;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnName;
+        private System.Windows.Forms.DataGridViewTextBoxColumn columnComputer;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnIp;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnStatus;
     }

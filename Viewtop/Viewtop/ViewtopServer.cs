@@ -8,6 +8,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using Gosub.Http;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
+
 
 
 namespace Gosub.Viewtop
@@ -33,6 +35,38 @@ namespace Gosub.Viewtop
             {".css", "text/css" },
             {".js", "application/javascript" }
         };
+
+        List<string> mLocalIpAddresses = new List<string>()
+        {
+            "10.",
+            "192.168.",
+            "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+            "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+        };
+
+        public class ComputerInfo
+        {
+            // Serialized and set to browser
+            public string ComputerName = "";
+            public string Name = "";
+            public string LocalIp = "";
+            public string[] LocalIps = new string[0];
+            public string PublicIp = "";
+            public string HttpsPort = "";
+            public string HttpPort = "";
+            public string Status = "";
+        }
+
+        public ComputerInfo LocalComputerInfo { get; set; } = new ComputerInfo();
+        public ComputerInfo[] RemoteComputerInfo { get; set; } = new ComputerInfo[0];
+
+        // Query=info
+        class Info
+        {
+            // Serialized and set to browser
+            public ComputerInfo Local;
+            public ComputerInfo[] Remotes;
+        }
 
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
@@ -73,6 +107,20 @@ namespace Gosub.Viewtop
             if (!request.Query.TryGetValue("query", out string query))
             {
                 await SendJsonErrorAsync(context, "Query must include 'query' parameter");
+                return;
+            }
+
+            if (query == "info")
+            {
+
+                // Do not send when IP address is on the public internet.  TBD: Allow 172.17, etc.
+                var ip = ((IPEndPoint)context.RemoteEndPoint).Address.ToString();
+                bool localIp = mLocalIpAddresses.FindIndex((a) => ip.StartsWith(a)) >= 0;
+
+                var info = new Info();
+                info.Local = LocalComputerInfo;
+                info.Remotes = localIp ? RemoteComputerInfo : new ComputerInfo[0];
+                await context.SendResponseAsync(JsonConvert.SerializeObject(info));
                 return;
             }
 

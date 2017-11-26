@@ -209,7 +209,7 @@ namespace Gosub.Http
                     break;
                 case OpCode.Close:
                     mReadMessageType = WebSocketMessageType.Close;
-                    mState = WebSocketState.Closed;
+                    mState = mState == WebSocketState.CloseSent ? WebSocketState.Closed : WebSocketState.CloseReceived;
                     break;
                 case OpCode.Text:
                     mReadMessageType = WebSocketMessageType.Text;
@@ -224,11 +224,16 @@ namespace Gosub.Http
 
         public async Task CloseAsync(WebSocketCloseStatus closeStatus, string statusDescription, CancellationToken cancellationToken)
         {
+            if (mState == WebSocketState.Closed || mState == WebSocketState.CloseSent)
+                throw new HttpException(500, "Websocket: Sent 'close' message after connection was already closed.  Connection state=" + mState);
+            mState = mState == WebSocketState.CloseReceived ? WebSocketState.Closed : WebSocketState.CloseSent;
+
             // Prepend two bytes for status
             var message = Encoding.UTF8.GetBytes("XX" + statusDescription);
             message[0] = (byte)((int)closeStatus >> 8);
             message[1] = (byte)(int)closeStatus;
             await SendAsync(new ArraySegment<byte>(message), WebSocketMessageType.Close, true, cancellationToken);
+            await mWriter.FlushAsync();
         }
 
         public async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)

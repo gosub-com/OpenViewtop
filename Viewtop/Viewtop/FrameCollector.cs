@@ -10,6 +10,7 @@ namespace Gosub.Viewtop
 {
     class FrameCollector : IDisposable
     {
+        static Font sErrorFont = new Font("Arial", 32);
         bool mIsScaledScreen;
         Bitmap mFullScreen;
         Bitmap mScaledScreen;
@@ -49,10 +50,19 @@ namespace Gosub.Viewtop
             // Copy screen
             using (Graphics grScreen = Graphics.FromImage(mFullScreen))
             {
-                grScreen.CopyFromScreen(System.Windows.Forms.Screen.PrimaryScreen.Bounds.X,
-                                        System.Windows.Forms.Screen.PrimaryScreen.Bounds.Y,
-                                        0, 0, mFullScreen.Size,
-                                        CopyPixelOperation.SourceCopy);
+                try
+                {
+                    grScreen.CopyFromScreen(System.Windows.Forms.Screen.PrimaryScreen.Bounds.X,
+                                            System.Windows.Forms.Screen.PrimaryScreen.Bounds.Y,
+                                            0, 0, mFullScreen.Size,
+                                            CopyPixelOperation.SourceCopy);
+                }
+                catch
+                {
+                    // Can't copy screen when showing UAC or login
+                    grScreen.Clear(Color.Black);
+                    grScreen.DrawString("\r\n\r\nERROR: Can't copy the screen while showing UAC or login", sErrorFont, Brushes.Red, new PointF(0, 0));
+                }
 
                 // Draw the mouse cursor
                 var cursor = CursorInfo.GetCursor(out bool cursorNeedsDisposing);

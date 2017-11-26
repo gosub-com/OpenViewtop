@@ -13,7 +13,6 @@ namespace Gosub.Http
         Open = 2,
         CloseSent = 3,
         CloseReceived = 4,
-        Closed = 5,
-        Aborted = 6
+        Closed = 5
     }
 }
