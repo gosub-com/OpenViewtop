@@ -24,7 +24,6 @@ namespace Gosub.Viewtop
         const int PROBLEM_PEER_TIME_MS = 3000;
 
         HttpServer mHttpServer;
-        HttpServer mHttpsServer;
 
         ViewtopServer mOvtServer = new ViewtopServer();
         Beacon mBeacon = new Beacon();
@@ -79,7 +78,6 @@ namespace Gosub.Viewtop
         private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
         {
             try { mHttpServer.Stop(); } catch { }
-            try { mHttpsServer.Stop(); } catch { }
             try { mBeacon.Stop(); } catch {  }
             try { Settings.Save(mSettings); } catch { }
         }
@@ -229,8 +227,6 @@ namespace Gosub.Viewtop
         {
             if (mHttpServer != null)
                 mHttpServer.Stop();
-            if (mHttpsServer != null)
-                mHttpsServer.Stop();
 
             // Get machine name
             string machineName = "";
@@ -255,23 +251,18 @@ namespace Gosub.Viewtop
             try
             {
                 // Setup HTTP server
-                var certificate = GetCertificate();
                 mHttpServer = new HttpServer();
-                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT),
-                    (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); });
+                mHttpServer.HttpHandler += (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); };
+                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT));
                 mOvtServer.LocalComputerInfo.HttpPort = HTTP_PORT.ToString();
 
-                // Setup HTTPS server
-                mHttpsServer = new HttpServer();
-                mHttpsServer.UseSsl(certificate);
-                mHttpsServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT),
-                    (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); });
+                // Setup HTTPS connection
+                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT), GetCertificate());
                 mOvtServer.LocalComputerInfo.HttpsPort = HTTPS_PORT.ToString();
             }
             catch (Exception ex)
             {
                 try { mHttpServer.Stop(); } catch { }
-                try { mHttpsServer.Stop(); } catch { }
                 MessageBox.Show(this, "Error starting web server: " + ex.Message, App.Name);
                 labelSecureLink.Text = "Error starting server";
                 return;
@@ -324,10 +315,7 @@ namespace Gosub.Viewtop
         {
             if (mHttpServer != null)
                 mHttpServer.Stop();
-            if (mHttpsServer != null)
-                mHttpsServer.Stop();
             mHttpServer = null;
-            mHttpsServer = null;
             mOvtServer = new ViewtopServer();
 
             labelSecureLink.Text = "Web Server stopped";

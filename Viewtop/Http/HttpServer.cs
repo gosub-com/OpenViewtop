@@ -18,13 +18,10 @@ namespace Gosub.Http
     /// </summary>
     public class HttpServer
     {
-        public delegate Task HttpHandler(HttpContext HttpStream);
+        public delegate Task HttpHandlerDelegate(HttpContext context);
 
         object mLock = new object();
-        TcpListener mListener;
-        HttpHandler mHttpHandler;
-        X509Certificate mCertificate;
-
+        HashSet<TcpListener> mListeners = new HashSet<TcpListener>();
         CancellationToken mCancellationToken = CancellationToken.None; // TBD: Implement cancellation token
         int mConcurrentRequests;
         int mMaxConcurrentRequests;
@@ -33,6 +30,7 @@ namespace Gosub.Http
         {
         }
 
+        public event HttpHandlerDelegate HttpHandler;
         public int HeaderTimeout { get; set; } = 10000;
         public int BodyTimeout { get; set; } = 60000;
 
@@ -43,21 +41,21 @@ namespace Gosub.Http
         public bool Sync { get; set; }
 
         /// <summary>
-        /// Call this with a certificate to use SSL, or with NULL to disable SSL
+        /// Start server on this listner in a background thread
         /// </summary>
-        public void UseSsl(X509Certificate certificate)
+        public void Start(TcpListener listener)
         {
-            mCertificate = certificate;
+            Start(listener, null);
         }
 
         /// <summary>
-        /// Start server in background thread.  
+        /// Start ssl server on this listener in background thread
         /// </summary>
-        public void Start(TcpListener listener, HttpHandler httpHandler)
+        public void Start(TcpListener listener, X509Certificate certificate)
         {
-            mHttpHandler = httpHandler;
-            mListener = listener;
-            mListener.Start();
+            listener.Start();
+            lock (mLock)
+                mListeners.Add(listener);
 
             // Process incoming connections in background thread 
             // since we don't want it running on the GUI thread
@@ -67,23 +65,33 @@ namespace Gosub.Http
                 {
                     while (true)
                     {
-                        var client = await mListener.AcceptTcpClientAsync();
-                        ThreadPool.QueueUserWorkItem(delegate { TryProcessRequestsAsync(client); });
+                        var client = await listener.AcceptTcpClientAsync();
+                        ThreadPool.QueueUserWorkItem(delegate { TryProcessRequestsAsync(client, certificate); });
                     }
                 }
                 catch (Exception ex)
                 {
                     Debug.WriteLine("HttpServer exception: " + ex.Message);
                 }
+                lock (mLock)
+                    mListeners.Remove(listener);
+                try { listener.Stop(); }
+                catch { }
             });
         }
 
         public void Stop()
         {
-            mListener.Stop();
+            lock (mLock)
+            {
+                foreach (var listener in mListeners)
+                    try { listener.Stop(); }
+                    catch { }
+                mListeners.Clear();
+            }
         }
 
-        async void TryProcessRequestsAsync(TcpClient client)
+        async void TryProcessRequestsAsync(TcpClient client, X509Certificate certificate)
         {
             int concurrentRequests = Interlocked.Add(ref mConcurrentRequests, 1);
             Thread.VolatileWrite(ref mMaxConcurrentRequests, Math.Max(concurrentRequests, Thread.VolatileRead(ref mMaxConcurrentRequests)));            
@@ -97,11 +105,11 @@ namespace Gosub.Http
                     client.NoDelay = true;
                     var tcpStream = (Stream)client.GetStream();
                     bool isSecure = false;
-                    if (mCertificate != null)
+                    if (certificate != null)
                     {
                         // Wrap stream in an SSL stream, and authenticate
                         var sslStream = new SslStream(tcpStream, false);
-                        await sslStream.AuthenticateAsServerAsync(mCertificate);
+                        await sslStream.AuthenticateAsServerAsync(certificate);
                         tcpStream = sslStream;
                         isSecure = true;
                     }
@@ -138,7 +146,7 @@ namespace Gosub.Http
 
                 // Read header
                 reader.ReadTimeout = HeaderTimeout;
-                if (!await context.ReadHttpHeaderAsync().ConfigureAwait(false))
+                if (!await context.ReadHttpHeaderAsyncInternal().ConfigureAwait(false))
                     return; // Connection closed
 
                 // Handle body
@@ -146,27 +154,28 @@ namespace Gosub.Http
                 writer.WriteTimeout = HeaderTimeout;
                 try
                 {
-                    // Process request
-                    if (mHttpHandler == null)
+                    // Process HTTP request
+                    var handler = HttpHandler;
+                    if (handler == null)
                         throw new HttpException(503, "HTTP request handler not installed");
-                    await mHttpHandler(context).ConfigureAwait(false);
+                    await handler(context).ConfigureAwait(false);
                 }
                 catch (HttpException ex) when (ex.KeepConnectionOpen && !context.Response.HeaderSent)
                 {
                     // Keep the persistent connection open only if it's OK to do so.
                     await ProcessExceptionAsync(context, ex);
                 }
-                await writer.FlushHeaderInternal();
+                await writer.FlushAsync();
 
                 // Any of these problems will terminate a persistent connection
                 var response = context.Response;
                 var request = context.Request;
-                var websocket = request.IsWebSocketRequest;
+                var isWebsocket = request.IsWebSocketRequest;
                 if (!response.HeaderSent)
                     throw new HttpException(500, "Request handler did not send a response for: " + context.Request.TargetFull);
-                if (!websocket && reader.Position != request.ContentLength && request.ContentLength >= 0)
+                if (!isWebsocket && reader.Position != request.ContentLength && request.ContentLength >= 0)
                     throw new HttpException(500, "Request handler did not read correct number of bytes: " + request.TargetFull);
-                if (!websocket && writer.Position != response.ContentLength)
+                if (!isWebsocket && writer.Position != response.ContentLength)
                     throw new HttpException(500, "Request handler did not write correct number of bytes: " + request.TargetFull);
             } while (!context.Request.IsWebSocketRequest && context.Response.KeepAlive);
         }

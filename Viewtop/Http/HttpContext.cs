@@ -1,13 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
 using System.Net.Sockets;
-using System.Net.Security;
-using System.Security.Cryptography;
-using System.Threading;
 using System.Net;
 
 namespace Gosub.Http
@@ -22,7 +18,7 @@ namespace Gosub.Http
         HttpWriter mWriter;
         HttpRequest mRequest;
         HttpResponse mResponse;
-        bool mHeaderSent;
+        WebSocket mWebSocket;
         public bool IsSecure { get; }
 
         static Dictionary<string, bool> mMethods = new Dictionary<string, bool>()
@@ -60,9 +56,9 @@ namespace Gosub.Http
         public HttpReader GetReader()
         {
             if (mRequest.IsWebSocketRequest)
-                throw new HttpException(500, "GetWriter: Not allowed to get an http reader on a websocket connection");
+                throw new HttpException(500, "GetReader: Not allowed to get an http reader on a websocket connection");
 
-            if (!mHeaderSent)
+            if (!mResponse.HeaderSent)
             {
                 mResponse.ContentLength = Math.Max(0, mResponse.ContentLength);
                 SetHttpHeader();
@@ -72,14 +68,14 @@ namespace Gosub.Http
 
         /// <summary>
         /// Set the HTTP response header and return the output stream.
-        /// The response may not be modified after calling this function.
+        /// The response header may not be modified after calling this function.
         /// </summary>
         public HttpWriter GetWriter(long contentLength)
         {
             if (mRequest.IsWebSocketRequest)
                 throw new HttpException(500, "GetWriter: Not allowed to get an http writer on a websocket connection");
 
-            if (!mHeaderSent)
+            if (!mResponse.HeaderSent)
             {
                 if (contentLength < 0)
                     throw new HttpException(500, "GetWriter: ContentLength must be >= zero");
@@ -90,27 +86,44 @@ namespace Gosub.Http
                 throw new HttpException(500, "GetWriter: ContentLength cannot be changed once it is set");
             return mWriter;
         }
-           
+
+        /// <summary>
+        /// Set the HTTP response header and return the web socket.
+        /// The response header may not be modified after calling this function.
+        /// </summary>
+        public WebSocket AcceptWebSocket(string protocol)
+        {
+            if (!mRequest.IsWebSocketRequest)
+                throw new HttpException(500, "Websocket not allowed to accept a non-web socket request");
+            if (mResponse.HeaderSent)
+                throw new HttpException(500, "Websocket cannot accept connection after http header was already sent");
+            if (mWebSocket != null)
+                throw new HttpException(404, "Websocket connection was already accepted");
+
+            mTcpClient.NoDelay = true;
+            mWebSocket = new WebSocket(this, mReader, mWriter, protocol);
+            return mWebSocket;
+        }
+
+
         /// <summary>
         /// Called only by HttpServer
         /// Read and parse the HTTP header, return true if everything worked.
         /// Returns false at EOF.  Throw an exception on error.
         /// </summary>
-        async internal Task<bool> ReadHttpHeaderAsync()
+        async internal Task<bool> ReadHttpHeaderAsyncInternal()
         {
             mRequest = new HttpRequest();
             mRequest.Headers = new HttpQuery();
             mRequest.ReceiveDate = DateTime.Now;
 
             mResponse = new HttpResponse();
-            mHeaderSent = false;
             mReader.PositionInternal = 0;
             mReader.LengthInternal = HTTP_HEADER_MAX_SIZE;
 
             var buffer = await mReader.ReadHttpHeaderAsyncInternal();
             if (buffer.Count == 0)
                 return false;
-
 
             var header = Encoding.UTF8.GetString(buffer.Array, buffer.Offset, buffer.Count).Split(new string[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries);
             if (header.Length == 0)
@@ -219,7 +232,7 @@ namespace Gosub.Http
         /// </summary>
         void SetHttpHeader()
         {
-            if (mHeaderSent)
+            if (mResponse.HeaderSent)
                 throw new HttpException(500, "SendHttpHeader: Http header already sent");
             if (mResponse.ContentLength < 0)
                 throw new HttpException(500, "SendHttpHeader: ConentLength must be set before sending header");
@@ -231,30 +244,28 @@ namespace Gosub.Http
             bool keepAlive = connection == "keep-alive" || mRequest.ProtocolVersionMinor >= 1 && connection != "close";
             Response.KeepAlive = keepAlive;
 
-            // Freeze http response header and setup send
-            mHeaderSent = true;
-            mResponse.HeaderSent = true;
-            mWriter.PositionInternal = 0;
-            mWriter.LengthInternal = HTTP_HEADER_MAX_SIZE;
-
-            // Check status message
+            // Status message
             var statusMessage = mResponse.StatusMessage.Replace('\r', ' ').Replace('\n', ' ');
             if (mResponse.StatusCode != 200 && statusMessage == "OK")
                 statusMessage = "?";
 
-            // Send header
-            string header = "HTTP/1.1 " + mResponse.StatusCode + " " + statusMessage + CRLF
-                            + "Content-Length:" + mResponse.ContentLength + CRLF
-                            + "Connection:" + (keepAlive ? "keep-alive" : "close") + CRLF
-                            + (mResponse.ContentType == "" ? "" : "Content-Type:" + mResponse.ContentType + CRLF)
-                            + CRLF;
-            mWriter.SetHeaderInternal(Encoding.UTF8.GetBytes(header));
+            // Generate HTTP header
+            var header = Encoding.UTF8.GetBytes(
+                "HTTP/1.1 " + mResponse.StatusCode + " " + statusMessage + CRLF
+                + "Content-Length:" + mResponse.ContentLength + CRLF
+                + "Connection:" + (keepAlive ? "keep-alive" : "close") + CRLF
+                + (mResponse.ContentType == "" ? "" : "Content-Type:" + mResponse.ContentType + CRLF)
+                + CRLF);
 
             // Good to go, reset streams
             mReader.PositionInternal = 0;
             mReader.LengthInternal = Math.Max(0, mRequest.ContentLength);
-            mWriter.PositionInternal = 0;
+            mWriter.PositionInternal = -header.Length; // Write position measures content output length
             mWriter.LengthInternal = Math.Max(0, mResponse.ContentLength);
+
+            // Freeze HTTP response and send header
+            mResponse.HeaderSent = true;
+            mWriter.SetPreWriteTaskInternal(mWriter.WriteAsync(header));
         }
 
         public async Task SendResponseAsync(byte []message)
@@ -299,50 +310,6 @@ namespace Gosub.Http
                 index += await stream.ReadAsync(buffer, index, buffer.Length - index);
             return buffer;
         }
-
-        /// <summary>
-        /// Throw exception if this isn't the correct protocol
-        /// </summary>
-        public async Task<WebSocket> AcceptWebSocketAsync(string protocol)
-        {
-            if (mResponse.HeaderSent)
-                throw new HttpException(500, "AcceptWebSocketAsync: Cannot accept websocket connection after http header was already sent");
-            if (!mRequest.IsWebSocketRequest)
-                throw new HttpException(500, "AcceptWebSocketAsync: Not allowed to accept a non-web socket request");
-
-            // Freeze http response header and setup send
-            mTcpClient.NoDelay = true;
-            mHeaderSent = true;
-            mResponse.HeaderSent = true;
-            mWriter.PositionInternal = 0;
-            mWriter.LengthInternal = long.MaxValue;
-            mReader.LengthInternal = long.MaxValue;
-
-            // RFC 6455, 4.2.1 and 4.2.2
-            string requestProtocol = mRequest.Headers.Get("sec-websocket-protocol");
-            if (requestProtocol != protocol.ToLower()) // TBD: Split comma delimited string
-                throw new HttpException(400, "Invalid websocket protocol requested: " + requestProtocol, true);
-
-            string key = mRequest.Headers.Get("sec-websocket-key");
-            if (key == "")
-                throw new HttpException(400, "Websocket key not sent by client");
-            string keyHash;
-            using (var sha = SHA1.Create())
-                keyHash = Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-
-            // Send header
-            string header = "HTTP/1.1 101 Switching Protocols" + CRLF
-                            + "Connection: Upgrade" + CRLF
-                            + "Upgrade: websocket" + CRLF
-                            + "Sec-WebSocket-Accept: " + keyHash + CRLF
-                            + "Sec-WebSocket-Protocol: " + requestProtocol + CRLF
-                            + CRLF;
-            var headerBytes = Encoding.UTF8.GetBytes(header);
-            await mWriter.WriteAsync(headerBytes, 0, headerBytes.Length);
-
-            return new WebSocket(this, mReader, mWriter);
-        }
-
 
     }
 }

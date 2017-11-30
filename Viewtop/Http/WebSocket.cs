@@ -1,11 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Threading;
 using System.IO;
 using System.Diagnostics;
+using System.Security.Cryptography;
 
 namespace Gosub.Http
 {
@@ -14,11 +13,14 @@ namespace Gosub.Http
     /// </summary>
     public class WebSocket
     {
+        const string CRLF = "\r\n";
+        const int READ_BUFFER_SIZE = 2048;
+
         HttpContext mContext;
         HttpReader mReader;
         HttpWriter mWriter;
+        WebSocketState mState;
 
-        const int READ_BUFFER_SIZE = 2048;
         byte[] mReadHeaderBuffer = new byte[16];
         byte[] mReadBuffer;
         int    mReadFrameLength;
@@ -28,11 +30,11 @@ namespace Gosub.Http
         int    mReadMaskIndex;
         WebSocketMessageType mReadMessageType = WebSocketMessageType.Close;
         byte[] mWriteHeaderBuffer = new byte[16];
-        WebSocketState mState;
 
         public bool PingReceived { get; set; }
         public bool PongReceived { get; set; }
         public WebSocketState State => mState;
+        public HttpRequest Request => mContext.Request;
 
         /// <summary>
         /// Maximum message size allowed to be received (default 64Kb)
@@ -50,14 +52,42 @@ namespace Gosub.Http
         }
 
         /// <summary>
-        /// Only called by HttpContext
+        /// Only called by HttpServer
         /// </summary>
-        internal WebSocket(HttpContext context, HttpReader reader, HttpWriter writer)
+        internal WebSocket(HttpContext context, HttpReader reader, HttpWriter writer, string protocol)
         {
             mState = WebSocketState.Open;
             mContext = context;
             mReader = reader;
             mWriter = writer;
+
+            var request = context.Request;
+            var requestProtocol = request.Headers.Get("sec-websocket-protocol"); // TBD: Split "," separated list
+            if (protocol != requestProtocol)
+                throw new HttpException(400, "Invalid websocket protocol.  Client requested '" + requestProtocol + "', server accepted '" + protocol + "'");
+
+            // RFC 6455, 4.2.1 and 4.2.2
+            string key = request.Headers.Get("sec-websocket-key");
+            if (key == "")
+                throw new HttpException(400, "Websocket key not sent by client");
+            string keyHash;
+            using (var sha = SHA1.Create())
+                keyHash = Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+
+            // Generate HTTP header
+            string header = "HTTP/1.1 101 Switching Protocols" + CRLF
+                            + "Connection: Upgrade" + CRLF
+                            + "Upgrade: websocket" + CRLF
+                            + "Sec-WebSocket-Accept: " + keyHash + CRLF
+                            + "Sec-WebSocket-Protocol: " + protocol + CRLF
+                            + CRLF;
+
+            // Freeze HTTP response and send header
+            mContext.Response.HeaderSent = true;
+            mWriter.PositionInternal = 0;
+            mWriter.LengthInternal = long.MaxValue;
+            mReader.LengthInternal = long.MaxValue;
+            mWriter.SetPreWriteTaskInternal(mWriter.WriteAsync(Encoding.UTF8.GetBytes(header)));
         }
 
         /// <summary>

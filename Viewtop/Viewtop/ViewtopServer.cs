@@ -105,10 +105,7 @@ namespace Gosub.Viewtop
             }
 
             if (!request.Query.TryGetValue("query", out string query))
-            {
-                await SendJsonErrorAsync(context, "Query must include 'query' parameter");
-                return;
-            }
+                throw new HttpException(400, "Query must include 'query' parameter");
 
             if (query == "info")
             {
@@ -142,18 +139,13 @@ namespace Gosub.Viewtop
             }
 
             if (!long.TryParse(request.Query.Get("sid"), out long sid))
-            {
-                await SendJsonErrorAsync(context, "Query must include 'sid'");
-                return;
-            }
+                throw new HttpException(400, "Query must include 'sid'");
+
             ViewtopSession session;
             lock (mLock)
                 mSessions.TryGetValue(sid, out session);
             if (session == null)
-            {
-                await SendJsonErrorAsync(context, "Unknown 'sid'");
-                return;
-            }
+                throw new HttpException(400, "Unknown 'sid'");
 
             await session.ProcessWebRemoteViewerRequestAsync(context);
         }
@@ -170,16 +162,6 @@ namespace Gosub.Viewtop
                 foreach (var sessionId in timedOutSessions)
                     mSessions.Remove(sessionId);
             }
-        }
-
-        /// <summary>
-        /// Error messages from the viewtop server are in JSON with code 200
-        /// </summary>
-        public async static Task SendJsonErrorAsync(HttpContext context, string message)
-        {
-            await context.SendResponseAsync(@"{""FAIL"":""" +
-                message.Replace("\"", "\\\"").Replace("\\", "\\\\")
-                + @"""}", 400);
         }
 
     }

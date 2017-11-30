@@ -139,14 +139,6 @@ namespace Gosub.Viewtop
             var queryString = request.Query;
 
             var query =  queryString.Get("query");
-
-            // Websockets!
-            if (context.Request.IsWebSocketRequest)
-            {
-                await HandleWebSocketRequest(context);
-                return;
-            }
-
             if (query == "startsession")
             {
                 // Send session id, password salt, and challenge
@@ -154,30 +146,28 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            // --- Everything below this requires authentication ---
-            if (!mAuthenticated)
+            if (context.Request.IsWebSocketRequest)
             {
-                await ViewtopServer.SendJsonErrorAsync(context, "User must be logged in");
+                await HandleWebSocketRequest(context.AcceptWebSocket("viewtop"));
                 return;
             }
+
+            // --- Everything below this requires authentication ---
+            if (!mAuthenticated)
+                throw new HttpException(400, "User must be logged in", true);
 
             if (query == "clip")
             {
                 if (!mClip.EverChanged)
-                {
-                    await ViewtopServer.SendJsonErrorAsync(context, "Not allowed to access clipboard until data is copied");
-                    return;
-                }
+                    throw new HttpException(400, "Not allowed to access clipboard until data is copied", true);
                 await SendClipDataAsync(context);
                 return;
             }
-
-            await ViewtopServer.SendJsonErrorAsync(context, "ERROR: Invalid query name - " + query);
+            throw new HttpException(400, "ERROR: Invalid query name - " + query, true);
         }
 
-        async Task HandleWebSocketRequest(HttpContext context)
+        public async Task HandleWebSocketRequest(WebSocket websocket)
         {
-            var websocket = await context.AcceptWebSocketAsync("viewtop");
             try
             {
                 await TryHandleWebSocketRequest(websocket);
@@ -208,7 +198,6 @@ namespace Gosub.Viewtop
 
         async Task TryHandleWebSocketRequest(WebSocket websocket)
         {
-
             // Read login (startsession was called via XHR, and now we expect username and password)
             await websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
             var login = ReadJson<LoginInfo>(mWebsocketRequestStream);

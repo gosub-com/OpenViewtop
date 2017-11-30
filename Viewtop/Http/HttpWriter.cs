@@ -18,7 +18,7 @@ namespace Gosub.Http
         CancellationToken mCancellationToken;
         long mLength;
         long mPosition;
-        byte[] mHeaderBytes;
+        Task mPreWriteTask;
 
         internal HttpWriter(Stream stream, CancellationToken cancellationToken, bool sync)
         {
@@ -37,29 +37,21 @@ namespace Gosub.Http
         /// </summary>
         internal long PositionInternal { get => mPosition; set => mPosition = value; }
         internal long LengthInternal { get => mLength; set => mLength = value; }
-        internal void SetHeaderInternal(byte[] headerBytes)
+        internal void SetPreWriteTaskInternal(Task task) { mPreWriteTask = task; }
+
+        public Task WriteAsync(byte []buffer)
         {
-            if (mHeaderBytes != null)
-                throw new HttpException(500, "Header bytes already set");
-            mHeaderBytes = headerBytes;
-        }
-        internal async Task FlushHeaderInternal()
-        {
-            if (mHeaderBytes != null)
-                await WriteAsync(null, 0, 0);
+            return WriteAsync(buffer, 0, buffer.Length);
         }
 
         public async Task WriteAsync(byte[] buffer, int offset, int count)
         {
-            // Send Header
-            if (mHeaderBytes != null)
+            if (mPreWriteTask != null)
             {
-                if (mSync)
-                    mStream.Write(mHeaderBytes, 0, mHeaderBytes.Length);
-                else
-                    await mStream.WriteAsync(mHeaderBytes, 0, mHeaderBytes.Length, mCancellationToken);
-                mHeaderBytes = null;
+                await mPreWriteTask;
+                mPreWriteTask = null;
             }
+
             if (count == 0)
                 return;
 
@@ -91,6 +83,12 @@ namespace Gosub.Http
 
         public async Task FlushAsync()
         {
+            if (mPreWriteTask != null)
+            {
+                await mPreWriteTask;
+                mPreWriteTask = null;
+            }
+
             if (mSync)
                 mStream.Flush();
             else
