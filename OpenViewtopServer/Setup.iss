@@ -1,40 +1,41 @@
 ﻿[Setup]
 AppName=Open Viewtop
-AppVersion=0.0.12
+AppVersion=0.0.16
 OutputDir=.
-OutputBaseFilename=SetupOpenViewtop-0.0.12
+OutputBaseFilename=SetupOpenViewtop-0.0.16
 UsePreviousAppDir=false
 UsePreviousGroup=false
-DefaultDirName={pf}\Gosub\Open Viewtop
+DefaultDirName={pf64}\Gosub\Open Viewtop
 DefaultGroupName=Open Viewtop
 AppPublisher=Gosub Software
 UninstallDisplayName=Open Viewtop
-UninstallDisplayIcon={app}\Gosub.Viewtop.exe
+UninstallDisplayIcon={app}\OpenViewtopServer.exe
 LicenseFile=License.txt
 
 [Files]
-Source: "Gosub.Viewtop.exe"; DestDir: "{app}"; flags:ignoreversion
+Source: "OpenViewtopServer.exe"; DestDir: "{app}"; flags:ignoreversion
+Source: "Gosub.OpenViewtop.dll"; DestDir: "{app}"; flags:ignoreversion
 Source: "www\*"; DestDir: "{app}\www"; flags:recursesubdirs ignoreversion
 Source: "Newtonsoft.Json.dll"; DestDir: "{app}"; flags:ignoreversion
 Source: "Mono.Security.dll"; DestDir: "{app}"; flags:ignoreversion
 
 [Icons]
-Name: "{group}\Open Viewtop"; Filename: "{app}\Gosub.Viewtop.exe"
+Name: "{group}\Open Viewtop"; Filename: "{app}\OpenViewtopServer.exe"
 Name: "{group}\Uninstall Open Viewtop"; Filename: "{uninstallexe}"
 
 [Run]
-FileName: "{app}\Gosub.Viewtop.exe"; Flags: Postinstall
+FileName: "{app}\OpenViewtopServer.exe"; Flags: Postinstall
 
 
 [Code]
+
+const
+	OPEN_VIEWTOP_SERVER_EXE = 'OpenViewtopServer.exe';
+
 // **************************************************************************
 // The following code is for adding rules to the firewall
-// **************************************************************************
-
 // http://www.vincenzo.net/isxkb/index.php?title=Adding_a_rule_to_the_Windows_firewall
-// http://stackoverflow.com/questions/5641839/programmatically-add-an-application-to-all-profile-windows-firewall-vista
-// Utility functions for Inno Setup used to add/remove programs from the windows firewall rules
-// Code originally from http://news.jrsoftware.org/news/innosetup/msg43799.html
+// **************************************************************************
 
 const
   NET_FW_SCOPE_ALL = 0;
@@ -147,23 +148,19 @@ begin
 end;
 
 // **************************************************************************
-// Add firewall rules, start and stop services
+// Add firewall rules
 // **************************************************************************
-
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  // Add firewall rules
   if CurStep = ssPostInstall then begin
-    // Allow direct communications to Viewtop.exe (i.e. Beacon, UDP, TCP)
-    SetFirewallException('Open Viewtop', ExpandConstant('{app}')+'\Gosub.Viewtop.exe');
+    SetFirewallException('Open Viewtop', ExpandConstant('{app}') + '\' + OPEN_VIEWTOP_SERVER_EXE);
   end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin  
-  // Remove firewall rules after uninstalling
   if CurUninstallStep = usPostUninstall then begin
-     RemoveFirewallException(ExpandConstant('{app}')+'\Gosub.Viewtop.exe');
+     RemoveFirewallException(ExpandConstant('{app}')+ '\' + OPEN_VIEWTOP_SERVER_EXE);
   end;
 end;

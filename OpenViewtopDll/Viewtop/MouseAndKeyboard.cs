@@ -15,7 +15,7 @@ namespace Gosub.Viewtop
     ///       
     /// Need to ignore remote mouse events when the local user is dragging the mouse.
     /// </summary>
-    class MouseAndKeyboard
+    public class MouseAndKeyboard
     {
         /// <summary>
         /// This must be set to the main form before using this class

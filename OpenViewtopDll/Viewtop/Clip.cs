@@ -13,7 +13,7 @@ namespace Gosub.Viewtop
     /// <summary>
     /// Provide thread safe access to the clipboard.
     /// </summary>
-    class Clip
+    public class Clip
     {
         /// <summary>
         /// This must be set to the main form before using this class

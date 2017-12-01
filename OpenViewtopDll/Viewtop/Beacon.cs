@@ -15,7 +15,7 @@ namespace Gosub.Viewtop
     /// <summary>
     /// Broadcast a beacon, and communicate with remote computers
     /// </summary>
-    class Beacon
+    public class Beacon
     {
         const int BROADCAST_PORT = 24706;
         const int BROADCAST_TIME_MS = 1400;

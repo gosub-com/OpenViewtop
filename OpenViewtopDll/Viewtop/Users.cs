@@ -11,7 +11,7 @@ using System.Security.Cryptography;
 
 namespace Gosub.Viewtop
 {
-    class UserFile
+    public class UserFile
     {
         const string USER_FILE_NAME = "Users.json";
         static object sLock = new object();
@@ -56,7 +56,7 @@ namespace Gosub.Viewtop
         }
     }
 
-    class User
+    public class User
     {
         public string UserName { get; set; } = "";
         public string Salt { get; set; } = "";

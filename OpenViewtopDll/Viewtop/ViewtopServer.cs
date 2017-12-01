@@ -17,7 +17,7 @@ namespace Gosub.Viewtop
     /// <summary>
     /// Handle Viewtop requests (each request in its own thread)
     /// </summary>
-    class ViewtopServer
+    public class ViewtopServer
     {
         const int CONNECTION_TIMEOUT_SEC = 30;
         object mLock = new object();

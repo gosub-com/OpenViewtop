@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("Viewtop")]
-[assembly: AssemblyDescription("")]
+[assembly: AssemblyTitle("Open Viewtop")]
+[assembly: AssemblyDescription("Remote Desktop Viewer")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("Viewtop")]
+[assembly: AssemblyCompany("Gosub")]
+[assembly: AssemblyProduct("Open Viewtop")]
 [assembly: AssemblyCopyright("Copyright ©  2016")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

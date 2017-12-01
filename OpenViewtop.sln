@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27004.2008
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenViewtopDll", "OpenViewtopDll\OpenViewtopDll.csproj", "{270AEC26-5435-4F0E-B786-409026A688B1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenViewtopServer", "OpenViewtopServer\OpenViewtopServer.csproj", "{E65E9FB8-7656-4333-A24B-FF9816805CE4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{270AEC26-5435-4F0E-B786-409026A688B1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{270AEC26-5435-4F0E-B786-409026A688B1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{270AEC26-5435-4F0E-B786-409026A688B1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{270AEC26-5435-4F0E-B786-409026A688B1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E65E9FB8-7656-4333-A24B-FF9816805CE4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E65E9FB8-7656-4333-A24B-FF9816805CE4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E65E9FB8-7656-4333-A24B-FF9816805CE4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E65E9FB8-7656-4333-A24B-FF9816805CE4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {534FC41D-8B42-4B9D-BA2E-A857B396BBFE}
+	EndGlobalSection
+EndGlobal
