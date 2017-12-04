@@ -50,8 +50,8 @@ namespace Gosub.Viewtop
         private void FormMain_Load(object sender, EventArgs e)
         {
             Text = App.Name + ", version " + App.Version;
-            MouseAndKeyboard.MainForm = this;
-            Clip.MainForm = this;
+            MouseAndKeyboard.GuiThreadControl = this;
+            Clip.GuiThreadControl = this;
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
@@ -257,7 +257,7 @@ namespace Gosub.Viewtop
                 mOvtServer.LocalComputerInfo.HttpPort = HTTP_PORT.ToString();
 
                 // Setup HTTPS connection
-                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT), GetCertificate());
+                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT), Util.GetCertificate());
                 mOvtServer.LocalComputerInfo.HttpsPort = HTTPS_PORT.ToString();
             }
             catch (Exception ex)
@@ -325,34 +325,6 @@ namespace Gosub.Viewtop
 
             buttonStop.Enabled = false;
             buttonStart.Enabled = true;
-        }
-
-
-        X509Certificate2 GetCertificate()
-        {
-            try
-            {
-                // Try reading a previously created pfx
-                string pfxPath = Application.CommonAppDataPath + "\\OpenViewTop.pfx";
-                byte[] pfx = new byte[0];
-                try { pfx = File.ReadAllBytes(pfxPath); }
-                catch { }
-
-                // Create the PFX and save it, if necessary
-                const string password = "OpenViewTop";
-                if (pfx.Length == 0)
-                {
-                    pfx = PFXGenerator.GeneratePfx("OpenViewTop", password);
-                    File.WriteAllBytes(pfxPath, pfx);
-                }
-                return new X509Certificate2(pfx, password,
-                    X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, "Error setting up secure link.  Your HTTPS connection may not work.  \r\n\r\n" + ex.Message, App.Name);
-            }
-            return null;
         }
 
         private void listUsers_SelectedIndexChanged(object sender, EventArgs e)

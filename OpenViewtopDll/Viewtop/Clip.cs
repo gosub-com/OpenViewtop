@@ -16,10 +16,9 @@ namespace Gosub.Viewtop
     public class Clip
     {
         /// <summary>
-        /// This must be set to the main form before using this class
-        /// so that SendKeys can be invoked on the GUI thread.
+        /// This must be set to a control so clipboard functions can be invoked on the GUI thread.
         /// </summary>
-        public static Form MainForm;
+        public static Control GuiThreadControl;
 
         // Use the windows SDK to detect when the clipboard changes
         [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
@@ -71,21 +70,21 @@ namespace Gosub.Viewtop
         public bool ContainsText()
         {
             var containsText = false;
-            MainForm.Invoke((MethodInvoker)(() => { containsText = Clipboard.ContainsText(); }));
+            GuiThreadControl?.Invoke((MethodInvoker)(() => { containsText = Clipboard.ContainsText(); }));
             return containsText;
         }
 
         public bool ContainsFiles()
         {
             var containsFiles = false;
-            MainForm.Invoke((MethodInvoker)(() => { containsFiles = Clipboard.ContainsFileDropList(); }));
+            GuiThreadControl?.Invoke((MethodInvoker)(() => { containsFiles = Clipboard.ContainsFileDropList(); }));
             return containsFiles;
         }
 
         public string GetText()
         {
             var text = "";
-            MainForm.Invoke((MethodInvoker)(() =>
+            GuiThreadControl?.Invoke((MethodInvoker)(() =>
             {
                 if (Clipboard.ContainsText())
                     text = Clipboard.GetText();
@@ -96,7 +95,7 @@ namespace Gosub.Viewtop
         public string []GetFiles()
         {
             var files = new string[0];
-            MainForm.Invoke((MethodInvoker)(() =>
+            GuiThreadControl?.Invoke((MethodInvoker)(() =>
             {
                 if (Clipboard.ContainsFileDropList())
                 {

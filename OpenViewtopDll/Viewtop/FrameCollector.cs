@@ -57,11 +57,11 @@ namespace Gosub.Viewtop
                                             0, 0, mFullScreen.Size,
                                             CopyPixelOperation.SourceCopy);
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Can't copy screen when showing UAC or login
                     grScreen.Clear(Color.Black);
-                    grScreen.DrawString("\r\n\r\nERROR: Can't copy the screen while showing UAC or login", sErrorFont, Brushes.Red, new PointF(0, 0));
+                    grScreen.DrawString("Can't copy the screen: " + ex.Message, sErrorFont, Brushes.Red, new PointF(0, 0));
                 }
 
                 // Draw the mouse cursor
