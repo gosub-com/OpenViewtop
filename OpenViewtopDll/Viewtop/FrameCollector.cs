@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
+using static Gosub.Viewtop.NativeMethods;
 
 namespace Gosub.Viewtop
 {
@@ -120,11 +121,11 @@ namespace Gosub.Viewtop
             try
             {
                 CURSORINFO cursorInfo;
-                cursorInfo.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
+                cursorInfo.StructSize = Marshal.SizeOf(typeof(CURSORINFO));
                 GetCursorInfo(out cursorInfo);
-                if (cursorInfo.hCursor != IntPtr.Zero)
+                if (cursorInfo.Cursof != IntPtr.Zero)
                 {
-                    var cursor = new Cursor(cursorInfo.hCursor);
+                    var cursor = new Cursor(cursorInfo.Cursof);
 
                     // NOTE: Since the IBeam uses XOR, it is invisible when drawn by C#
                     //       We should either create our own IBeam icon, or else use GDI
@@ -146,23 +147,5 @@ namespace Gosub.Viewtop
             return Cursors.Default;
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        struct POINT
-        {
-            public int x;
-            public int y;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        struct CURSORINFO
-        {
-            public int cbSize;
-            public int flags;
-            public IntPtr hCursor;
-            public POINT ptScreenPos;
-        }
-
-        [DllImport("user32.dll")]
-        static extern bool GetCursorInfo(out CURSORINFO pci);
     }
 }

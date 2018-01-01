@@ -38,15 +38,16 @@ namespace Gosub.Viewtop
             return ToHex(salt);
         }
 
-        public static int GenerateRandomId()
+        public static long GenerateRandomId()
         {
-            var idBytes = new byte[4];
+            // Do not overflow a double precision nubmer (mantissa is 53 bits)
+            var idBytes = new byte[6];
             using (var rng = new RNGCryptoServiceProvider())
-                rng.GetBytes(idBytes);
-            int id = 0;
+                rng.GetNonZeroBytes(idBytes);
+            long id = 0;
             foreach (var b in idBytes)
                 id = id * 256 + b;
-            return id & 0x7FFFFFFF;
+            return id;
         }
 
         static public X509Certificate2 GetCertificate()

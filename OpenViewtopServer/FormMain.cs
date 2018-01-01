@@ -5,7 +5,6 @@ using System.Drawing;
 using System.Windows.Forms;
 using System.IO;
 using System.Collections.Generic;
-using System.Security.Cryptography.X509Certificates;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -17,14 +16,20 @@ namespace Gosub.Viewtop
     {
         const int HTTP_PORT = 8151;
         const int HTTPS_PORT = 8152;
+        const int HTTP_PORT_DEBUG = 8153;
+        const int HTTPS_PORT_DEBUG = 8154;
+
         const string BROADCAST_HEADER = "OVT:";
 
         const int PURGE_PEER_AFTER_EXIT_MS = 6000;
         const int PURGE_PEER_LOST_CONNECTION_MS = 10000;
         const int PROBLEM_PEER_TIME_MS = 3000;
 
+        int mHttpPort;
+        int mHttpsPort;
         HttpServer mHttpServer;
 
+        string mControlPipe = "";
         ViewtopServer mOvtServer = new ViewtopServer();
         Beacon mBeacon = new Beacon();
         PeerInfo mPeerInfo = new PeerInfo();
@@ -46,12 +51,19 @@ namespace Gosub.Viewtop
         {
             InitializeComponent();
         }
+        public FormMain(string  controlPipe)
+        {
+            mControlPipe = controlPipe;
+            InitializeComponent();
+        }
 
         private void FormMain_Load(object sender, EventArgs e)
         {
             Text = App.Name + ", version " + App.Version;
             MouseAndKeyboard.GuiThreadControl = this;
             Clip.GuiThreadControl = this;
+            mHttpPort = mControlPipe == "" ? HTTP_PORT_DEBUG : HTTP_PORT;
+            mHttpsPort = mControlPipe == "" ? HTTPS_PORT_DEBUG : HTTPS_PORT;
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
@@ -67,6 +79,7 @@ namespace Gosub.Viewtop
                 LoadUserFileFirstTime();
                 StartWebServer();
                 StartBeacon();
+                timerUpdateRemoteGrid.Enabled = true;
             }
             catch (Exception ex)
             {
@@ -81,6 +94,26 @@ namespace Gosub.Viewtop
             try { mBeacon.Stop(); } catch {  }
             try { Settings.Save(mSettings); } catch { }
         }
+
+        // TBD: Use pipe to exit process gracefully, rather than killing from service
+        //async private void WaitForNamedPipe()
+        //{
+        //    if (mControlPipe != "")
+        //    {
+        //        var np = new NamedPipeClientStream(mControlPipe);
+        //        await Task.Run(() => { np.Connect(); });
+        //        label1.Text = "Connected";
+        //        var control = new StreamReader(np);
+        //        while (true)
+        //        {
+        //            var message = await control.ReadLineAsync();
+        //            if (message == "close")
+        //                Application.Exit();
+        //            else
+        //                MessageBox.Show("Message: " + message);
+        //        }
+        //    }
+        //}
 
         private void CheckAppDataDirectory()
         {
@@ -122,8 +155,8 @@ namespace Gosub.Viewtop
                 try { mPeerInfo.ComputerName = Dns.GetHostName(); }
                 catch { MessageBox.Show(this, "Error getting Dns host name.", App.Name); }
                 mPeerInfo.Name = textName.Text;
-                mPeerInfo.HttpsPort = HTTPS_PORT.ToString();
-                mPeerInfo.HttpPort = HTTP_PORT.ToString();
+                mPeerInfo.HttpsPort = mHttpsPort.ToString();
+                mPeerInfo.HttpPort = mHttpPort.ToString();
                 mBeacon.Start(BROADCAST_HEADER, mPeerInfo);
                 mBeacon.PeerAdded += mBeacon_PeerAdded;
                 mBeacon.PeerRemoved += mBeacon_PeerRemoved;
@@ -252,13 +285,13 @@ namespace Gosub.Viewtop
             {
                 // Setup HTTP server
                 mHttpServer = new HttpServer();
-                mHttpServer.HttpHandler += (context) => { return mOvtServer.ProcessWebRemoteViewerRequest(context); };
-                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT));
-                mOvtServer.LocalComputerInfo.HttpPort = HTTP_PORT.ToString();
+                mHttpServer.HttpHandler += (context) => { return mOvtServer.ProcessOpenViewtopRequestAsync(context); };
+                mHttpServer.Start(new TcpListener(IPAddress.Any, mHttpPort));
+                mOvtServer.LocalComputerInfo.HttpPort = mHttpPort.ToString();
 
                 // Setup HTTPS connection
-                mHttpServer.Start(new TcpListener(IPAddress.Any, HTTPS_PORT), Util.GetCertificate());
-                mOvtServer.LocalComputerInfo.HttpsPort = HTTPS_PORT.ToString();
+                mHttpServer.Start(new TcpListener(IPAddress.Any, mHttpsPort), Util.GetCertificate());
+                mOvtServer.LocalComputerInfo.HttpsPort = mHttpsPort.ToString();
             }
             catch (Exception ex)
             {
@@ -268,14 +301,14 @@ namespace Gosub.Viewtop
                 return;
             }
 
-            string link = "https://" + machineName + ":" + HTTPS_PORT;
+            string link = "https://" + machineName + ":" + mHttpsPort;
             string text = "";
             labelSecureLink.Text = text + link;
             labelSecureLink.Links.Clear();
             labelSecureLink.Links.Add(text.Length, link.Length, link);
             labelSecureLink.Enabled = true;
 
-            link = "http://" + machineName + ":" + HTTP_PORT;
+            link = "http://" + machineName + ":" + mHttpPort;
             text = "";
             labelUnsecureLink.Text = text + link;
             labelUnsecureLink.Links.Clear();

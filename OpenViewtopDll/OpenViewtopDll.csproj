@@ -83,11 +83,13 @@
     <Compile Include="Viewtop\FrameCollector.cs" />
     <Compile Include="Viewtop\Bitmap32Bits.cs" />
     <Compile Include="Viewtop\MouseAndKeyboard.cs" />
+    <Compile Include="Viewtop\NativeMethods.cs" />
     <Compile Include="Viewtop\Users.cs" />
     <Compile Include="Viewtop\PFXGenerator.cs" />
     <Compile Include="Viewtop\Util.cs" />
     <Compile Include="Viewtop\ViewtopServer.cs" />
     <Compile Include="Viewtop\ViewtopSession.cs" />
+    <Compile Include="Viewtop\Wts.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
@@ -98,9 +100,6 @@
       <DependentUpon>Resources.resx</DependentUpon>
       <DesignTime>True</DesignTime>
     </Compile>
-    <None Include="app.manifest">
-      <SubType>Designer</SubType>
-    </None>
     <None Include="packages.config" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>

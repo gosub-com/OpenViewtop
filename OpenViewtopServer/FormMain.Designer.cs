@@ -183,7 +183,6 @@
             // 
             // timerUpdateRemoteGrid
             // 
-            this.timerUpdateRemoteGrid.Enabled = true;
             this.timerUpdateRemoteGrid.Interval = 1000;
             this.timerUpdateRemoteGrid.Tick += new System.EventHandler(this.timerUpdateRemoteGrid_Tick);
             // 

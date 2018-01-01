@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Windows.Forms;
 using System.Drawing;
+using static Gosub.Viewtop.NativeMethods;
 
 namespace Gosub.Viewtop
 {
@@ -26,12 +26,6 @@ namespace Gosub.Viewtop
         const int SHIFT_CODE = 16;
         const int CTRL_CODE = 17;
         const int ALT_CODE = 18;
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
-        public static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, IntPtr dwExtraInfo);
-
-        [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
-        public static extern void keybd_event(int bVk, int bScan, int dwFlags, IntPtr dwExtraInfo);
 
         bool mMouseOnScreen;
         long mMouseMoveTime;

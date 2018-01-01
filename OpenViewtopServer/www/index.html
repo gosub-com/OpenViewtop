@@ -203,7 +203,7 @@ button::-moz-focus-inner
 
     function PollServerInfo()
     {
-        HttpGet("openviewtop.ovt?query=info",
+        HttpGet("/ovt/info",
         function ()
         {
             if (this.readyState != 4)

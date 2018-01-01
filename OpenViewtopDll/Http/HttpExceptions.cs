@@ -13,7 +13,7 @@ namespace Gosub.Http
     /// back to the client (only "SERVER ERROR" is displayed)
     /// Client error message text (i.e. 400's) is sent back to the client
     /// </summary>
-    class HttpException : Exception
+    public class HttpException : Exception
     {
         public int Code { get; }
         public bool KeepConnectionOpen { get; }

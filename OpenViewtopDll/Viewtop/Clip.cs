@@ -1,12 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Diagnostics;
-using System.Collections.Specialized;
+using static Gosub.Viewtop.NativeMethods;
 
 namespace Gosub.Viewtop
 {
@@ -19,10 +15,6 @@ namespace Gosub.Viewtop
         /// This must be set to a control so clipboard functions can be invoked on the GUI thread.
         /// </summary>
         public static Control GuiThreadControl;
-
-        // Use the windows SDK to detect when the clipboard changes
-        [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
-        public static extern int GetClipboardSequenceNumber();
 
         int mClipSequence;
         bool mEverChanged;

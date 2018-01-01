@@ -9,32 +9,62 @@ namespace OpenViewtopServer
 {
     static class Program
     {
+        public const string PARAM_USER_SERVER = "-userserver";
+        public const string PARAM_SERVICE = "-service";
+        public const string PARAM_DEBUG_SERVICE = "-debugservice";
+        public const string PARAM_CONTROL_PIPE = "-controlpipe";
+
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
         static void Main(string []args)
         {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
             bool isService = false;
-            foreach (var param in args)
-                if (param == "-service")
+            bool isDebugService = false;
+            bool isUserServer = false;
+            string controlPipe = "";
+            for (int i = 0;  i < args.Length;)
+            {
+                var param = args[i++];
+                if (param == PARAM_USER_SERVER)
+                    isUserServer = true;
+                else if (param == PARAM_SERVICE)
                     isService = true;
+                else if (param == PARAM_DEBUG_SERVICE)
+                    isDebugService = true;
+                else if (param == PARAM_CONTROL_PIPE && i < args.Length && !args[i].StartsWith("-"))
+                    controlPipe = args[i++];
+            }
 
             if (isService)
             {
-                // Run Service.
+                // Server service
                 var viewtopService = new ViewtopService();
-                var services = new ServiceBase[] { viewtopService };
-                ServiceBase.Run(services);
+                ServiceBase.Run(viewtopService);
+                return;
+            }
+
+
+            Form form;
+            if (isDebugService)
+            {
+                form = new FormMain();
+            }
+            else if (isUserServer)
+            {
+                if (controlPipe == "")
+                    controlPipe = "X";  // TBD: Change
+                form = new FormMain(controlPipe);
             }
             else
             {
-                // Run GUI
-                Thread.CurrentThread.SetApartmentState(ApartmentState.STA);
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new FormMain());
+                form = new FormMain();
             }
+            Application.Run(form);
         }
     }
 }

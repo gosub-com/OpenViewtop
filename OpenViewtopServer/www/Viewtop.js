@@ -15,6 +15,9 @@ function Viewtop(canvas)
     var EVENTS_LOOP_TIME_MS = 7;
     var MOUSE_MOVE_TIME_MS = 25;
 
+    var WS_URL = "/ovt/ws";
+    var CLIP_URL = "/ovt/clip";
+
     var mCanvas = canvas;
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
@@ -39,6 +42,9 @@ function Viewtop(canvas)
     var mDrawSequence = 1;
     var mDrawQueue = {};
 
+    var RETRY_TIMEOUT = 1000;
+    var MAX_FAILS_IN_A_ROW = 3;
+    var mFailsInARow = 0;
 
     // Set draw options (each separated by '&')
     this.DrawOptions = "";
@@ -48,7 +54,6 @@ function Viewtop(canvas)
     {
         mUsername = username;
         mPassword = password;
-        mRunning = true;
         InitializeCanvas();
         StartSession();
 
@@ -85,6 +90,10 @@ function Viewtop(canvas)
         mCanvas.onkeypress = function () { };
         mCanvas.onkeyup = function () { };
         mCanvas.oncontextmenu = function () { return true; }
+        mWebSocket.onopen = function () { };
+        mWebSocket.onerror = function (e) { };
+        mWebSocket.onclose = function (e) { };
+        mWebSocket.onmessage = function (e) { };
     }
 
     // Called when the user clicks the canvas
@@ -166,48 +175,65 @@ function Viewtop(canvas)
         e.stopPropagation();
     }
 
-    // Start session using XmlHttpRequest
     function StartSession()
     {
-        HttpGet("openviewtop.ovt?query=startsession&rid=" + Date.now() + "&username=" + mUsername,
-        function ()
-        {
-            if (!HttpDone(this, "Start session request failed"))
-                return;
-            var sessionInfo = JSON.parse(this.responseText);
-            mSessionId = sessionInfo.sid;
+        mKeyAndMouseEvents = [];
+        mDrawQueue = {};
+        mDrawSequence = 1;
+        mGetSequence = 1;
+        mRunning = true;
 
-            LoginWs(sessionInfo.salt, sessionInfo.challenge);
-        });
-    }
-
-    function LoginWs(salt, challenge)
-    {
         var protocol = (location.protocol == "https:" ? "wss" : "ws") + "://";
-        var path = "/openviewtop.ovt";
-        var query = "?query=ws&sid=" + mSessionId;
-        mWebSocket = new WebSocket(protocol + location.host + path + query, "viewtop");
 
+        mWebSocket = new WebSocket(protocol + location.host + WS_URL, "viewtop");
         mWebSocket.onerror = function (event)
         {
-            ShowError("Web socket error");
+            mRunning = false;
+            if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
+            {
+                ShowError("Web socket error");
+            }
+            else
+            {
+                setTimeout(function () { StartSession(); }, RETRY_TIMEOUT);
+            }
         }
         mWebSocket.onclose = function (event)
         {
-            ShowError(event.reason == "" ? "Closed by remote: " + event.code  : event.reason);
+            mRunning = false;
+            if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
+            {
+                ShowError(event.reason == "" ? "Closed by remote: " + event.code : event.reason);
+            }
+            else
+            {
+                setTimeout(function () { StartSession(); }, RETRY_TIMEOUT);
+            }
         }
         mWebSocket.onopen = function (event)
         {
-            // Send login response
+            // Send login request
             var login =
             {
+                Event: "Username",
                 Username: mUsername,
-                PasswordHash: Sha256.hash(challenge + Sha256.hash(salt + mPassword).toUpperCase()).toUpperCase()
             };
             mWebSocket.send(JSON.stringify(login));
-            EventsLoopWs();
         }
-        mWebSocket.onmessage = function (e) { OnViewtopMessageWs(e); }
+        mWebSocket.onmessage = function (e)
+        {
+            try
+            {
+                OnViewtopMessageWs(e);
+                mFailsInARow = 0;
+            }
+            catch (e)
+            {
+                mRunning = false;
+                console.log("Websocket onmessage exception: " + e.message);
+                ShowError(e.stack);
+            }
+        }
     }
 
     // Round trip time
@@ -236,17 +262,32 @@ function Viewtop(canvas)
             return;
 
         var m = JSON.parse(e.data);
-
-        if (m.Event == "Close")
+        if (m.Event == "Challenge")
         {
-            ShowError(m.Message);
+            // Send login response
+            mSessionId = m.Sid;
+            var login =
+            {
+                Event: "ChallengeResponse",
+                Username: mUsername,
+                PasswordHash: Sha256.hash(m.Challenge + Sha256.hash(m.Salt + mPassword).toUpperCase()).toUpperCase()
+            };
+            mWebSocket.send(JSON.stringify(login));
         }
-        if (m.Event == "Draw")
+        else if (m.Event == "LoggedIn" && m.LoggedIn)
+        {
+            EventsLoopWs();
+        }
+        else if (m.Event == "Draw")
         {
             // TBD: Use round trip time, but need to preserve event sent time
             // SetRtt(Date.now() - sendTime); 
             mRtt = 30; // TBD: Need to call SetRtt.  Just use 20 milliseconds for now.
             LoadImagesThenQueue(m, m.Seq);
+        }
+        else if (m.Event == "Close")
+        {
+            ShowError(m.Message);
         }
     }
 
@@ -385,7 +426,7 @@ function Viewtop(canvas)
             clip.onclick = function ()
             {
                 // Download text, then show message to allow user to copy using CTRL-C
-                HttpGet("openviewtop.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime,
+                HttpGet(CLIP_URL + "?sid=" + mSessionId + "&rid=" + mClipChangedTime,
                 function ()
                 {
                     if (!HttpDone(this, "Copy clipboard text failed"))
@@ -401,7 +442,7 @@ function Viewtop(canvas)
             clip.style = "";
             clip.title = "DOWNLOAD FILE: '" + drawBuffer.Clip.FileName + "'"
                 + (drawBuffer.Clip.FileCount == 1 ? "" : ", (" + drawBuffer.Clip.FileCount + " files)");
-            clip.setAttribute('href', "openviewtop.ovt?query=clip&sid=" + mSessionId + "&rid=" + mClipChangedTime);
+            clip.setAttribute('href', CLIP_URL + "?sid=" + mSessionId + "&rid=" + mClipChangedTime);
             clip.setAttribute('download', drawBuffer.Clip.FileName);
             clip.onclick = function () { };
         }
@@ -478,13 +519,14 @@ function Viewtop(canvas)
 
     function ShowError(errorMessage)
     {
+        console.log("ShowError: " + errorMessage);
         mContext.fillStyle = '#000';
         mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
         mContext.font = '26px sans-serif';
         mContext.fillStyle = '#88F';
         mContext.fillText('ERROR: ' + errorMessage, 15, 25);
-        THIS.ErrorCallback(errorMessage);
         StopInternal();
+        THIS.ErrorCallback(errorMessage);
     }
     function ShowMessage(errorMessage)
     {

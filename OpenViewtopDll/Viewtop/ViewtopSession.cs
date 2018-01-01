@@ -2,18 +2,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Net;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using System.Threading;
 using System.Diagnostics;
 using System.Collections.Specialized;
-using System.Text;
 using System.IO;
 using System.IO.Compression;
 using Gosub.Http;
 using System.Threading.Tasks;
-using System.Drawing;
 
 namespace Gosub.Viewtop
 {
@@ -23,10 +18,8 @@ namespace Gosub.Viewtop
 
         public long SessionId { get; }
         public bool SessionClosed => mSessionClosed;
-        string mChallenge { get; set; } = "";
         object mLock = new object();
         object mLockZip = new object();
-        bool mAuthenticated;
         bool mSessionClosed;
 
         double mScreenScale = 1;
@@ -37,11 +30,7 @@ namespace Gosub.Viewtop
         MouseAndKeyboard mEvents = new MouseAndKeyboard();
         Clip mClip = new Clip();
         ClipInfo mClipInfo = new ClipInfo();
-
-        JsonSerializer mJsonSerializer = new JsonSerializer();
         MemoryStream mWebsocketRequestStream = new MemoryStream();
-        MemoryStream mWebsocketResponseStream = new MemoryStream();
-        Encoding mUtf8 = new UTF8Encoding(false); // No byte order mark
 
         class RemoteEvents
         {
@@ -73,17 +62,6 @@ namespace Gosub.Viewtop
             public int MaxWidth;
             public int MaxHeight;
             public string Options = "";
-        }
-
-        class LoginInfo
-        {
-            public string Event = "";
-            public string Message = "";
-
-            public string Username = "";
-            public string PasswordHash = "";
-            public bool LoggedIn;
-            public string ComputerName = "(unknown)";
         }
 
         class FrameInfo
@@ -132,45 +110,23 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Handle a web remote view request (each request is in its own thread)
         /// </summary>
-        public async Task ProcessWebRemoteViewerRequestAsync(HttpContext context)
+        public async Task ProcessOpenViewtopRequestAsync(HttpContext context)
         {
-            var request = context.Request;
-            var response = context.Response;
-            var queryString = request.Query;
-
-            var query =  queryString.Get("query");
-            if (query == "startsession")
-            {
-                // Send session id, password salt, and challenge
-                await context.SendResponseAsync(GetChallenge(request.Query.Get("username")), 200);
-                return;
-            }
-
-            if (context.Request.IsWebSocketRequest)
-            {
-                await HandleWebSocketRequest(context.AcceptWebSocket("viewtop"));
-                return;
-            }
-
-            // --- Everything below this requires authentication ---
-            if (!mAuthenticated)
-                throw new HttpException(400, "User must be logged in", true);
-
-            if (query == "clip")
+            if (context.Request.Target == "/ovt/clip")
             {
                 if (!mClip.EverChanged)
                     throw new HttpException(400, "Not allowed to access clipboard until data is copied", true);
                 await SendClipDataAsync(context);
                 return;
             }
-            throw new HttpException(400, "ERROR: Invalid query name - " + query, true);
+            throw new HttpException(400, "Unknown url: '" + context.Request.Target + "'", true);
         }
 
-        public async Task HandleWebSocketRequest(WebSocket websocket)
+        public async Task ProcessOpenViewtopWebSocketsAsync(WebSocket websocket)
         {
             try
             {
-                await TryHandleWebSocketRequest(websocket);
+                await TryProcessOpenViewtopWebsocketsAsync(websocket);
                 if (websocket.State == WebSocketState.Open || websocket.State == WebSocketState.CloseReceived)
                     await websocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "End of session", CancellationToken.None);
             }
@@ -183,7 +139,6 @@ namespace Gosub.Viewtop
             finally
             {
                 // Close session
-                mAuthenticated = false;
                 mSessionClosed = true;
                 while (mCollectors.Count != 0)
                     mCollectors.Dequeue().Dispose();
@@ -196,22 +151,8 @@ namespace Gosub.Viewtop
             }
         }
 
-        async Task TryHandleWebSocketRequest(WebSocket websocket)
+        async Task TryProcessOpenViewtopWebsocketsAsync(WebSocket websocket)
         {
-            // Read login (startsession was called via XHR, and now we expect username and password)
-            await websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
-            var login = ReadJson<LoginInfo>(mWebsocketRequestStream);
-
-            // Authenticate user and send response, sets mAuthenticated to true if they got in
-            var authenticateResponse = Authenticate(login.Username, login.PasswordHash);
-            if (!mAuthenticated)
-            {
-                // End session if not authenticated
-                await websocket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "Invalid user name or password", CancellationToken.None);
-                return;
-            }
-            await WriteJson(websocket, authenticateResponse);
-
             // Main loop
             Task<WebSocketMessageType> receiveTask = null;
             while (websocket.State < WebSocketState.CloseSent)
@@ -237,7 +178,7 @@ namespace Gosub.Viewtop
                         break; // Closed by remote
                     receiveTask = null;
 
-                    var request = ReadJson<RemoteEvents>(mWebsocketRequestStream);
+                    var request = ViewtopServer.ReadJson<RemoteEvents>(mWebsocketRequestStream);
                     ProcessRemoteEvents(request.Events);
                     if (request.DrawRequest != null)
                         await EnqueueCollectRequestAsync(websocket, request);
@@ -275,66 +216,7 @@ namespace Gosub.Viewtop
             GetClipInfo(frame);
 
             frame.Seq = drawRequest.Seq; // TBD: Remove?
-            await WriteJson(websocket, frame);
-        }
-
-        /// <summary>
-        /// Read JSON from a stream
-        /// </summary>
-        T ReadJson<T>(Stream s)
-        {
-            using (var sr = new StreamReader(s, mUtf8, true, 1024, true))
-            using (var jr = new JsonTextReader(sr))
-                return mJsonSerializer.Deserialize<T>(jr);
-        }
-
-        /// <summary>
-        /// Save JSON to a web socket stream, using mWebsocketResponse as a buffer
-        /// </summary>
-        async Task WriteJson(WebSocket websocket, object obj)
-        {
-            mWebsocketResponseStream.Position = 0;
-            mWebsocketResponseStream.SetLength(0);
-            using (var sw = new StreamWriter(mWebsocketResponseStream, mUtf8, 1024, true))
-            using (var jw = new JsonTextWriter(sw))
-                mJsonSerializer.Serialize(jw, obj);
-            await websocket.SendAsync(new ArraySegment<byte>(mWebsocketResponseStream.GetBuffer(), 0, (int)mWebsocketResponseStream.Length), WebSocketMessageType.Text, true, CancellationToken.None);
-        }
-
-
-        private string GetChallenge(string userName)
-        {
-            mChallenge = Util.GenerateSalt();
-            var user = UserFile.Load().Find(userName);
-            string salt = user != null ? user.Salt : Util.GenerateSalt();
-            string challenge = @"{""sid"": " + SessionId
-                + @",""challenge"":""" + mChallenge
-                + @""",""salt"":""" + salt + @"""}";
-            return challenge;
-        }
-
-        private LoginInfo Authenticate(string username, string passwordHash)
-        {
-            if (username != null && passwordHash != null)
-            {
-                var user = UserFile.Load().Find(username);
-                if (user != null)
-                    mAuthenticated = user.VerifyPassword(mChallenge, passwordHash);
-            }
-            // Generate response
-            var loginInfo = new LoginInfo();            
-            loginInfo.LoggedIn = mAuthenticated;
-            if (mAuthenticated)
-            {
-                try { loginInfo.ComputerName = Dns.GetHostName(); }
-                catch { }
-            }
-            else
-            {
-                loginInfo.Event = "Close";
-                loginInfo.Message = "Invalid user name or password";
-            }
-            return loginInfo;
+            await ViewtopServer.WriteJson(websocket, frame);
         }
 
         private void ProcessRemoteEvents(RemoteEvent []events)
@@ -369,7 +251,6 @@ namespace Gosub.Viewtop
                 }
             }
         }
-
 
         void GetFrame(FrameCollector collector, HttpQuery queryString, FrameInfo frame)
         {
