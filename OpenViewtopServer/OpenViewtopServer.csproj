@@ -60,11 +60,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="App.cs" />
-    <Compile Include="FormMain.cs">
+    <Compile Include="FormServer.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="FormMain.Designer.cs">
-      <DependentUpon>FormMain.cs</DependentUpon>
+    <Compile Include="FormServer.Designer.cs">
+      <DependentUpon>FormServer.cs</DependentUpon>
     </Compile>
     <Compile Include="FormPassword.cs">
       <SubType>Form</SubType>
@@ -84,8 +84,8 @@
     <Compile Include="ViewtopService.cs">
       <SubType>Component</SubType>
     </Compile>
-    <EmbeddedResource Include="FormMain.resx">
-      <DependentUpon>FormMain.cs</DependentUpon>
+    <EmbeddedResource Include="FormServer.resx">
+      <DependentUpon>FormServer.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="FormPassword.resx">
       <DependentUpon>FormPassword.cs</DependentUpon>

@@ -54,7 +54,7 @@ namespace OpenViewtopServer
                 return;
             }
 
-            var form = new FormMain();
+            var form = new FormServer();
             form.ControlPipe = controlPipe;
 
             // Just run under debugger

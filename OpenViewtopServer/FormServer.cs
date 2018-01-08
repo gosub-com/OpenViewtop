@@ -16,7 +16,7 @@ using OpenViewtopServer;
 
 namespace Gosub.Viewtop
 {
-    public partial class FormMain : Form
+    public partial class FormServer : Form
     {
         const int HTTP_PORT = 8151;
         const int HTTPS_PORT = 8152;
@@ -63,7 +63,7 @@ namespace Gosub.Viewtop
             public string HttpPort = "";
         }
 
-        public FormMain()
+        public FormServer()
         {
             InitializeComponent();
         }

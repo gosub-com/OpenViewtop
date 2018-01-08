@@ -1,6 +1,6 @@
 ﻿namespace Gosub.Viewtop
 {
-    partial class FormMain
+    partial class FormServer
     {
         /// <summary>
         /// Required designer variable.
@@ -29,7 +29,7 @@
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormMain));
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormServer));
             this.labelSecureLink = new System.Windows.Forms.LinkLabel();
             this.labelUnsecureLink = new System.Windows.Forms.LinkLabel();
             this.listUsers = new System.Windows.Forms.ListBox();
