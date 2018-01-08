@@ -8,7 +8,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.IO.Pipes;
+using System.Threading;
+using System.Threading.Tasks;
 using Gosub.Http;
+using OpenViewtopServer;
 
 namespace Gosub.Viewtop
 {
@@ -25,13 +29,25 @@ namespace Gosub.Viewtop
         const int PURGE_PEER_LOST_CONNECTION_MS = 10000;
         const int PROBLEM_PEER_TIME_MS = 3000;
 
+        public string ControlPipe { get; set; } = "";
+        public Mutex ShowOnTopMutex;
+
+        bool mDebug { get; set; } = Debugger.IsAttached;
+        bool mShowOnTopMutexLastState;
+
+        // The tray icon doesn't get displayed if the user account
+        // is still booting, so keep retrying for a while
+        // TBD: Find a better way to do this
+        const int TRAY_ICON_RETRIES = 30;
+        const int TRAY_ICON_RETRY_TIME = 5;
+        int mTrayIconRetryCount;
+
         int mHttpPort;
         int mHttpsPort;
         HttpServer mHttpServer;
 
-        string mControlPipe = "";
         ViewtopServer mOvtServer = new ViewtopServer();
-        Beacon mBeacon = new Beacon();
+        Beacon mBeacon;
         PeerInfo mPeerInfo = new PeerInfo();
         Settings mSettings = new Settings();
 
@@ -51,69 +67,94 @@ namespace Gosub.Viewtop
         {
             InitializeComponent();
         }
-        public FormMain(string  controlPipe)
-        {
-            mControlPipe = controlPipe;
-            InitializeComponent();
-        }
 
         private void FormMain_Load(object sender, EventArgs e)
         {
-            Text = App.Name + ", version " + App.Version;
+            Text = App.Name + ", version " + App.Version + (mDebug ? " - DEBUG" : "");
+            labelSecureLink.Text = "Starting...";
+            labelUnsecureLink.Text = "";
+            notifyIcon.Icon = Icon;
             MouseAndKeyboard.GuiThreadControl = this;
             Clip.GuiThreadControl = this;
-            mHttpPort = mControlPipe == "" ? HTTP_PORT_DEBUG : HTTP_PORT;
-            mHttpsPort = mControlPipe == "" ? HTTPS_PORT_DEBUG : HTTPS_PORT;
+            mHttpPort = mDebug ? HTTP_PORT_DEBUG : HTTP_PORT;
+            mHttpsPort = mDebug ? HTTPS_PORT_DEBUG : HTTPS_PORT;
+            if (!mDebug)
+                Hide();
         }
 
         private void FormMain_Shown(object sender, EventArgs e)
         {
             try
             {
-                Show();
-                Refresh();
-
+                if (!mDebug)
+                    Hide();
                 CheckAppDataDirectory();
                 mSettings = Settings.Load();
                 textName.Text = mSettings.Name;
                 LoadUserFileFirstTime();
-                StartWebServer();
-                StartBeacon();
-                timerUpdateRemoteGrid.Enabled = true;
             }
             catch (Exception ex)
             {
+                Log.Write("Application start error", ex);
                 MessageBox.Show(this, "Error loading application: " + ex.Message, App.Name);
                 Application.Exit();
             }
+            timerRunSystem.Interval = 10;
+            timerRunSystem.Enabled = true;
+            timerUpdateBeacon.Enabled = true;
+            ExecuteNamedPipeCommand();
         }
 
         private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
         {
+            if (e.CloseReason == CloseReason.UserClosing && !mDebug)
+            {
+                Hide();
+                e.Cancel = true;
+                return;
+            }
             try { mHttpServer.Stop(); } catch { }
             try { mBeacon.Stop(); } catch {  }
             try { Settings.Save(mSettings); } catch { }
         }
 
-        // TBD: Use pipe to exit process gracefully, rather than killing from service
-        //async private void WaitForNamedPipe()
-        //{
-        //    if (mControlPipe != "")
-        //    {
-        //        var np = new NamedPipeClientStream(mControlPipe);
-        //        await Task.Run(() => { np.Connect(); });
-        //        label1.Text = "Connected";
-        //        var control = new StreamReader(np);
-        //        while (true)
-        //        {
-        //            var message = await control.ReadLineAsync();
-        //            if (message == "close")
-        //                Application.Exit();
-        //            else
-        //                MessageBox.Show("Message: " + message);
-        //        }
-        //    }
-        //}
+        /// <summary>
+        /// This is needed since the form can display under other stuff when the user
+        /// clicks the tray icon or clicks the executable to show this form
+        /// </summary>
+        void ShowOnTop()
+        {
+            TopMost = true;
+            Show();
+            BringToFront();
+            TopMost = false;
+        }
+
+        // Use pipe to exit process gracefully, rather than killing from service
+        async void ExecuteNamedPipeCommand()
+        {
+            if (ControlPipe == "")
+                return;
+
+            Log.Write("Named pipe: " + ControlPipe);
+            try
+            {
+                var np = new NamedPipeClientStream(ControlPipe);
+                await Task.Run(() => { np.Connect(); });
+                Log.Write("Named pipe connected");
+                var control = new StreamReader(np);
+                while (true)
+                {
+                    var message = await control.ReadLineAsync();
+                    if (message == "close")
+                        Application.Exit();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Named pipe exception", ex);
+            }
+        }
 
         private void CheckAppDataDirectory()
         {
@@ -126,6 +167,7 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
+                Log.Write("CheckAppDataDirectory", ex);
                 MessageBox.Show(this, "Please create this directrory with appropriate pemissions.  " 
                     + "Error: " + ex.Message, App.Name);
                 throw;
@@ -150,26 +192,28 @@ namespace Gosub.Viewtop
 
         private void StartBeacon()
         {
+            if (mBeacon != null)
+                return;
+
             try
             {
-                try { mPeerInfo.ComputerName = Dns.GetHostName(); }
-                catch { MessageBox.Show(this, "Error getting Dns host name.", App.Name); }
+                mPeerInfo.ComputerName = Dns.GetHostName();
                 mPeerInfo.Name = textName.Text;
                 mPeerInfo.HttpsPort = mHttpsPort.ToString();
                 mPeerInfo.HttpPort = mHttpPort.ToString();
+                mBeacon = new Beacon();
                 mBeacon.Start(BROADCAST_HEADER, mPeerInfo);
                 mBeacon.PeerAdded += mBeacon_PeerAdded;
                 mBeacon.PeerRemoved += mBeacon_PeerRemoved;
                 mBeacon.PeerConnectionEstablishedChanged += mBeacon_PeerConnectionEstablishedChanged;
-                timerBeacon.Enabled = true;
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Error starting beacon: " + ex.Message, App.Name);
-            }
-            if (timerBeacon.Enabled && mBeacon.GetBroadcastAddresses().Length == 0)
-            {
-                MessageBox.Show(this, "Warning: No networks were detected.");
+                try { if (mBeacon != null) mBeacon.Stop(); }
+                catch { }
+                mBeacon = null;
+                Log.Write("StartBeacon: ", ex);
+                throw;
             }
         }
 
@@ -181,7 +225,8 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Error loading user files: " + ex.Message);
+                Log.Write("LoadUserFile", ex);
+                MessageBox.Show(this, "Error loading user files: " + ex.Message, App.Name);
             }
             return new UserFile();
         }
@@ -194,7 +239,8 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Error loading user files: " + ex.Message);
+                Log.Write("SaveUserFile", ex);
+                MessageBox.Show(this, "Error loading user files: " + ex.Message, App.Name);
             }
         }
 
@@ -234,16 +280,6 @@ namespace Gosub.Viewtop
             userFile.Users.Add(user);
         }
 
-        private void buttonStart_Click(object sender, EventArgs e)
-        {
-            StartWebServer();
-        }
-
-        private void buttonStop_Click(object sender, EventArgs e)
-        {
-            StopWebServer();
-        }
-
         private void labelSecureLink_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
             if (e.Link.LinkData != null)
@@ -259,33 +295,34 @@ namespace Gosub.Viewtop
         void StartWebServer()
         {
             if (mHttpServer != null)
-                mHttpServer.Stop();
-
-            // Get machine name
-            string machineName = "";
-            try { machineName = Dns.GetHostName(); }
-            catch { }
-            if (machineName.Trim() == "")
-                machineName = "localhost";
-            if (mSettings.Name.Trim() == "")
-            {
-                mSettings.Name = machineName;
-                textName.Text = machineName;
-            }
+                return;
 
             labelSecureLink.Text = "Starting...";
             Refresh();
-
-
-            mOvtServer = new ViewtopServer();
-            mOvtServer.LocalComputerInfo.ComputerName = machineName;
-            mOvtServer.LocalComputerInfo.Name = mSettings.Name;
-
+            string machineName = "";
             try
             {
+                // Get machine name
+                machineName = Dns.GetHostName();
+                if (machineName.Trim() == "")
+                    machineName = "localhost";
+                if (mSettings.Name.Trim() == "")
+                {
+                    mSettings.Name = machineName;
+                    textName.Text = machineName;
+                }
+                mOvtServer = new ViewtopServer();
+                mOvtServer.LocalComputerInfo.ComputerName = machineName;
+                mOvtServer.LocalComputerInfo.Name = mSettings.Name;
+
                 // Setup HTTP server
                 mHttpServer = new HttpServer();
-                mHttpServer.HttpHandler += (context) => { return mOvtServer.ProcessOpenViewtopRequestAsync(context); };
+                mHttpServer.HttpHandler += (context) => 
+                {
+                    if (context.Request.Target == "/ovt/log")
+                        return context.SendResponseAsync(Log.GetAsString(200));
+                    return mOvtServer.ProcessOpenViewtopRequestAsync(context);
+                };
                 mHttpServer.Start(new TcpListener(IPAddress.Any, mHttpPort));
                 mOvtServer.LocalComputerInfo.HttpPort = mHttpPort.ToString();
 
@@ -295,10 +332,11 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
+                Log.Write("StartWebServer", ex);
                 try { mHttpServer.Stop(); } catch { }
-                MessageBox.Show(this, "Error starting web server: " + ex.Message, App.Name);
-                labelSecureLink.Text = "Error starting server";
-                return;
+                mHttpServer = null;
+                labelSecureLink.Text = "Error: " + ex.Message;
+                throw;
             }
 
             string link = "https://" + machineName + ":" + mHttpsPort;
@@ -315,11 +353,7 @@ namespace Gosub.Viewtop
             labelUnsecureLink.Links.Add(text.Length, link.Length, link);
             labelUnsecureLink.Visible = true;
 
-            buttonStop.Enabled = true;
-            buttonStart.Enabled = false;
-
             GetPublicIpAddress();
-
         }
 
         async void GetPublicIpAddress()
@@ -355,9 +389,6 @@ namespace Gosub.Viewtop
             labelSecureLink.Enabled = false;
             labelUnsecureLink.Text = "Web server stopped";
             labelUnsecureLink.Visible = false;
-
-            buttonStop.Enabled = false;
-            buttonStart.Enabled = true;
         }
 
         private void listUsers_SelectedIndexChanged(object sender, EventArgs e)
@@ -377,7 +408,7 @@ namespace Gosub.Viewtop
         {
             if (listUsers.SelectedIndex < 0)
                 return;
-            if (MessageBox.Show(this, "Are you sure you want to delte this user?", App.Name, MessageBoxButtons.YesNo) == DialogResult.No)
+            if (MessageBox.Show(this, "Are you sure you want to delete this user?", App.Name, MessageBoxButtons.YesNo) == DialogResult.No)
                 return;
             var userFile = LoadUserFile();
             userFile.Remove((string)listUsers.Items[listUsers.SelectedIndex]);
@@ -403,11 +434,6 @@ namespace Gosub.Viewtop
                 return;
             user.ResetPassword(passwordForm.Password);
             SaveUserFile(userFile);
-        }
-
-        private void timerBeacon_Tick(object sender, EventArgs e)
-        {
-            mBeacon.Update();
         }
 
         private void textName_TextChanged(object sender, EventArgs e)
@@ -453,8 +479,53 @@ namespace Gosub.Viewtop
             RefreshPeerGrid();
         }
 
-        private void timerUpdateRemoteGrid_Tick(object sender, EventArgs e)
+        private void timerUpdateBeacon_Tick(object sender, EventArgs e)
         {
+            if (ShowOnTopMutex != null)
+            {
+                // Show this form on the rising edge of not being able to get
+                // the mutex, which means another instance (see Program.cs)
+                // is signalling this server to show itself.
+                var showOnTopMutexState = ShowOnTopMutex.WaitOne(0);
+                if (showOnTopMutexState)
+                    ShowOnTopMutex.ReleaseMutex();
+                if (!showOnTopMutexState && mShowOnTopMutexLastState)
+                    ShowOnTop();
+                mShowOnTopMutexLastState = showOnTopMutexState;
+            }
+
+            if (mBeacon != null)
+                mBeacon.Update();
+        }
+
+        private void timerRunSystem_Tick(object sender, EventArgs e)
+        {
+            timerRunSystem.Interval = 1000;
+
+            // The tray icon doesn't show if the user account is still booting
+            if (mTrayIconRetryCount <= TRAY_ICON_RETRIES)
+            {
+                mTrayIconRetryCount++;
+                if (mTrayIconRetryCount % TRAY_ICON_RETRY_TIME == 0)
+                {
+                    notifyIcon.Visible = false;
+                    notifyIcon.Visible = true;
+                }
+            }
+
+            // Retry starting the servers until it works
+            try
+            {
+                StartBeacon();
+                StartWebServer();
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Error starting server", ex);
+            }
+            if (mBeacon == null || mHttpServer == null)
+                return;
+
             RefreshPeerGrid();
 
             // Display local IP address
@@ -577,6 +648,12 @@ namespace Gosub.Viewtop
             {
                 return Text;
             }
+        }
+
+
+        private void notifyIcon_Click(object sender, EventArgs e)
+        {
+            ShowOnTop();
         }
 
     }

@@ -71,7 +71,7 @@ namespace Gosub.Http
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine("HttpServer exception: " + ex.Message);
+                    Log.Write("HttpServer exception", ex);
                 }
                 lock (mLock)
                     mListeners.Remove(listener);
@@ -127,7 +127,7 @@ namespace Gosub.Http
                     }
                     catch (Exception doubleFaultEx)
                     {
-                        Debug.WriteLine("DOUBLE FAULT EXCEPTION while processing exception: " + doubleFaultEx.Message);
+                        Log.Write("DOUBLE FAULT EXCEPTION", doubleFaultEx);
                     }
                 }
             }
@@ -188,7 +188,7 @@ namespace Gosub.Http
             if (aggEx != null && aggEx.InnerException != null)
             {
                 // Unwrap exception
-                Debug.WriteLine("SERVER ERROR: Aggregate with " + aggEx.InnerExceptions.Count + " inner exceptions");
+                Log.Write("SERVER ERROR Aggregate with " + aggEx.InnerExceptions.Count + " inner exceptions");
                 ex = ex.InnerException;
             }
 
@@ -200,20 +200,20 @@ namespace Gosub.Http
                 // Allow message to client
                 code = httpEx.Code;
                 message = httpEx.Message;
-                Debug.WriteLine("CLIENT EXCEPTION " + httpEx.Code + ": " + ex.Message);
+                Log.Write("HTTP CLIENT EXCEPTION " + httpEx.Code, ex);
             }
             else if (httpEx != null)
             {
                 // Allow code to client, but not message
                 code = httpEx.Code;
                 message = "Server error";
-                Debug.WriteLine("SERVER HTTP EXCEPTION " + httpEx.Code + ": " + ex.Message);
+                Log.Write("HTTP SERVER EXCEPTION " + httpEx.Code, ex);
             }
             else
             {
                 code = 500;
                 message = "Server error";
-                Debug.WriteLine("SERVER EXCEPTION " + ex.GetType() + ": " + ex.Message);
+                Log.Write("SERVER EXCEPTION", ex);
             }
 
             // Send response to client if it looks OK to do so

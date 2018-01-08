@@ -2,11 +2,12 @@
 using System.Net;
 using System.Net.Sockets;
 using System.IO;
-using System.Diagnostics;
+using System.IO.Pipes;
 using System.ServiceProcess;
 using System.Threading;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using System.Threading.Tasks;
 using Gosub.Viewtop;
 using Gosub.Http;
 
@@ -15,52 +16,82 @@ namespace OpenViewtopServer
     public partial class ViewtopService : ServiceBase
     {
         const int HTTP_PORT = 8157;
+
+        bool mRunning;
+        Timer mSessionChangedTimer;
         HttpServer mHttpSeviceServer;
 
-        int mActiveSessionId = -1;
-        Wts.Process mActiveProcess;
-        Timer mSessionChangedTimer;
+        int mServerSessionId = -1;
+        Wts.Process mServerProcess;
+        string mServerPipeName = "";
+        NamedPipeServerStream mServerPipe;
+        IAsyncResult mServerPipeAsyncResult;
 
-        List<string> mLog = new List<string>();
-
-        HttpServer mHttpServer;
-        ViewtopServer mOvtServer;
+        object mServiceLock = new object();
         
-        void AddLog(string log)
-        {
-            lock (mLog)
-            {
-                if (mLog.Count > 200)
-                    mLog.RemoveAt(mLog.Count-1);
-                mLog.Insert(0, DateTime.Now.ToString() + " - " + log);
-            }
-        }
-
         public ViewtopService()
         {
-            AddLog("Starting Service...");
-        }
-
-        public bool IsRunning => mHttpSeviceServer != null;
-
-        protected override void OnSessionChange(SessionChangeDescription changeDescription)
-        {
-            base.OnSessionChange(changeDescription);
-            AddLog("Session CHANGE: " + changeDescription.SessionId + ", " + Wts.GetActiveConsoleSessionId());
         }
 
         protected override void OnStart(string[] args)
         {
-            OnStop();
-            AddLog("OnStart");
+            lock (mServiceLock)
+            {
+                if (mRunning)
+                    return;
+                Log.Write("OnStart");
+                mRunning = true;
+                mSessionChangedTimer = new Timer((obj) => { ServiceRunningTimer(); }, null, 0, 453);
+            }
+        }
+
+        protected override void OnStop()
+        {
+            lock (mServiceLock)
+            {
+                if (!mRunning)
+                    return;
+                mRunning = false;
+
+                Log.Write("OnStop");
+                try { if (mHttpSeviceServer != null) mHttpSeviceServer.Stop(); }
+                catch { }
+                try { if (mSessionChangedTimer != null) mSessionChangedTimer.Dispose(); }
+                catch { }
+                mSessionChangedTimer = null;
+                mHttpSeviceServer = null;
+                KillServerProcess(true);
+            }
+        }
+
+        /// <summary>
+        /// Called periodically to ensure everything is running properly
+        /// </summary>
+        void ServiceRunningTimer()
+        {
+            lock (mServiceLock)
+            {
+                if (!mRunning)
+                    return;
+
+                CheckHttpServerRunning();
+                CheckSessionChanged();
+            }
+        }
+
+        private void CheckHttpServerRunning()
+        {
+            if (mHttpSeviceServer != null)
+                return;
+
             try
             {
                 // Setup HTTP server
                 mHttpSeviceServer = new HttpServer();
-                mHttpSeviceServer.HttpHandler += (context) => 
+                mHttpSeviceServer.HttpHandler += (context) =>
                 {
                     if (context.Request.Target == "/ovt/log")
-                        return context.SendResponseAsync(string.Join("\r\n", mLog.ToArray()));
+                        return context.SendResponseAsync(Log.GetAsString(200));
                     if (context.Request.Target == "/ovt/sessions")
                         return context.SendResponseAsync(JsonConvert.SerializeObject(Wts.GetSessions(), Formatting.Indented));
                     throw new HttpException(404, "File not found");
@@ -69,80 +100,128 @@ namespace OpenViewtopServer
             }
             catch (Exception ex)
             {
+                Log.Write("Error starting Open Viewtop service", ex);
                 try { mHttpSeviceServer.Stop(); }
                 catch { }
-                Debug.WriteLine("Error starting Open Viewtop service: " + ex.Message);
-            }
-            mSessionChangedTimer = new Timer((obj) => { CheckSessionChanged(); }, null, 0, 453);
-
-            mOvtServer = new ViewtopServer();
-            try
-            {
-                // Setup HTTP server
-                mHttpServer = new HttpServer();
-                mHttpServer.HttpHandler += (context) => { return mOvtServer.ProcessOpenViewtopRequestAsync(context); };
-                mHttpServer.Start(new TcpListener(IPAddress.Any, 8159));
-                mOvtServer.LocalComputerInfo.HttpPort = "8159";
-            }
-            catch (Exception ex)
-            {
-                AddLog("Error starting OVT server: " + ex.Message);
-                try { mHttpServer.Stop(); } catch { }
+                mHttpSeviceServer = null;
             }
         }
 
-        protected override void OnStop()
-        {
-            if (mActiveProcess == null && mHttpSeviceServer == null && mSessionChangedTimer == null && mActiveSessionId < 0)
-                return;
-
-            AddLog("OnStop");
-            try { if (mHttpSeviceServer != null) mHttpSeviceServer.Stop();  }
-            catch { }
-            try { if (mSessionChangedTimer != null) mSessionChangedTimer.Dispose(); }
-            catch { }
-            KillActiveSession();
-            mHttpSeviceServer = null;
-            mSessionChangedTimer = null;
-        }
-
-        void CheckSessionChanged()
+        private void CheckSessionChanged()
         {
             try
             {
-                if (mActiveProcess != null && !mActiveProcess.IsRunning)
+                if (mServerProcess != null && !mServerProcess.IsRunning)
                 {
-                    AddLog("Process has stopped.  Restarting.");
-                    KillActiveSession();
+                    Log.Write("Process has stopped.  Restarting.");
+                    KillServerProcess(false);
                 }
 
                 var sessionId = Wts.GetActiveConsoleSessionId();
-                if (sessionId <= 0 || sessionId == mActiveSessionId)
+                if (sessionId <= 0 || sessionId == mServerSessionId)
                     return;
 
-                AddLog("Starting process on session " + sessionId);
-                KillActiveSession();
-                mActiveProcess = Wts.Process.CreateProcessAsUser(sessionId, System.Windows.Forms.Application.ExecutablePath,  "-userserver");
-                mActiveSessionId = sessionId;
+                // Kill process, then start a new one
+                KillServerProcess(false);
+                StartServerProcess(sessionId);
             }
             catch (Exception ex2)
             {
                 // TBD: Use event log
-                Debug.WriteLine("Error: " + ex2.Message);
-                AddLog("Error 2: " + ex2.Message);
+                Log.Write("Error checking session changed", ex2);
             }
         }
 
-        private void KillActiveSession()
+        private void StartServerProcess(int sessionId)
         {
-            mActiveSessionId = -1;
-            if (mActiveProcess == null)
+            try
+            {
+                mServerPipeName = "OpenViewtop_" + Util.GenerateRandomId();
+                mServerPipe = new NamedPipeServerStream(mServerPipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                mServerPipeAsyncResult = mServerPipe.BeginWaitForConnection(null, null);
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Error opening pipe", ex);
+                try { mServerPipe.Dispose(); } catch { }
+                mServerPipeName = "(error)";
+                mServerPipe = null;
+                mServerPipeAsyncResult = null;
+            }
+            Log.Write("Starting process on session " + sessionId + ", pipe=" + mServerPipeName);
+            mServerProcess = Wts.Process.CreateProcessAsUser(sessionId, System.Windows.Forms.Application.ExecutablePath,
+                Program.PARAM_SERVER + " " + Program.PARAM_CONTROL_PIPE + " " + mServerPipeName);
+            mServerSessionId = sessionId;
+        }
+
+        private void KillServerProcess(bool wait)
+        {
+            var process = mServerProcess;
+            var pipeName = mServerPipeName;
+            var pipe = mServerPipe;
+            var pipeResult = mServerPipeAsyncResult;
+            mServerSessionId = -1;
+            mServerProcess = null;
+            mServerPipeName = "";
+            mServerPipe = null;
+            mServerPipeAsyncResult = null;
+
+            if (process != null)
+                Log.Write("Kill server, pipe=" + pipeName + ", alive=" + process.IsRunning);
+
+            if (process == null || !process.IsRunning)
+            {
+                if (process != null)
+                    process.Dispose();
+                if (pipe != null)
+                    pipe.Dispose();
                 return;
-            try { mActiveProcess.Terminate(0); }
-            catch { }
-            try { mActiveProcess.Dispose(); }
-            catch { }
-            mActiveProcess = null;
+            }
+
+            if (pipe == null || pipeResult == null || !pipeResult.IsCompleted)
+            {
+                Log.Write("Pipe not connected, can't gracefully kill process");
+                if (process.IsRunning)
+                    Log.Write("FORCE KILL SERVER, pipe=" + pipeName + ", alive=" + process.IsRunning);
+                process.Terminate(0);
+                process.Dispose();
+                if (pipe != null)
+                    pipe.Dispose();
+            }
+
+            // Send close command in background thread
+            Task.Run(async () => 
+            {
+                try
+                {
+                    pipe.EndWaitForConnection(pipeResult);
+                    var sw = new StreamWriter(pipe);
+                    await sw.WriteLineAsync("close");
+                    await sw.FlushAsync();
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("Error sending close command", ex);
+                }
+            });
+
+            // Wait for it to kill itself gracefully
+            var task = Task.Run(async () => 
+            {
+                // Give it up to one second to kill itslef
+                var now = DateTime.Now;
+                while ((DateTime.Now - now).TotalMilliseconds < 1000 && process.IsRunning)
+                    await Task.Delay(10);
+
+                if (process.IsRunning)
+                    Log.Write("FORCE KILL SERVER, pipe=" + pipeName + ", alive=" + process.IsRunning);
+                process.Terminate(0);
+                process.Dispose();
+                pipe.Dispose();
+            });
+
+            if (wait)
+                task.Wait();
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Windows.Forms;
 using System.Diagnostics;
 using static Gosub.Viewtop.NativeMethods;
+using Gosub.Http;
 
 namespace Gosub.Viewtop
 {
@@ -54,7 +55,7 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("Error getting clipboard sequence: " + ex.Message);
+                Log.Write("Error getting clipboard sequence", ex);
                 return 0;
             }
         }
