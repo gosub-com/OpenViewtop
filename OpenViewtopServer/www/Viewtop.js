@@ -22,6 +22,7 @@ function Viewtop(canvas)
     var mContext = canvas.getContext('2d');
     var mSessionId = 0;
     var mRunning = false;
+    var mMessageCount = 0;
     var mUsername = "";
     var mPassword = "";
 
@@ -42,7 +43,7 @@ function Viewtop(canvas)
     var mDrawSequence = 1;
     var mDrawQueue = {};
 
-    var RETRY_TIMEOUT = 1000;
+    var RETRY_TIMEOUT = 500;
     var MAX_FAILS_IN_A_ROW = 3;
     var mFailsInARow = 0;
 
@@ -182,12 +183,15 @@ function Viewtop(canvas)
         mDrawSequence = 1;
         mGetSequence = 1;
         mRunning = true;
+        mMessageCount = 0;
 
         var protocol = (location.protocol == "https:" ? "wss" : "ws") + "://";
 
+        console.log("StartSession");
         mWebSocket = new WebSocket(protocol + location.host + WS_URL, "viewtop");
         mWebSocket.onerror = function (event)
         {
+            console.log("WebSocket.onerror: mFailsInARow=" + mFailsInARow);
             mRunning = false;
             if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
             {
@@ -195,11 +199,13 @@ function Viewtop(canvas)
             }
             else
             {
+                ShowMessage("Loading...");
                 setTimeout(function () { StartSession(); }, RETRY_TIMEOUT);
             }
         }
         mWebSocket.onclose = function (event)
         {
+            console.log("WebSocket.onclose: mFailsInARow=" + mFailsInARow);
             mRunning = false;
             if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
             {
@@ -207,12 +213,14 @@ function Viewtop(canvas)
             }
             else
             {
+                ShowMessage("Loading...");
                 setTimeout(function () { StartSession(); }, RETRY_TIMEOUT);
             }
         }
         mWebSocket.onopen = function (event)
         {
             // Send login request
+            console.log("WebSocket.onopen");
             var login =
             {
                 Event: "Username",
@@ -224,6 +232,10 @@ function Viewtop(canvas)
         {
             try
             {
+                if (mMessageCount == 0)
+                    console.log("mWebSocket.onmessage: Got first message");
+                mMessageCount++;
+
                 OnViewtopMessageWs(e);
                 mFailsInARow = 0;
             }
@@ -278,17 +290,15 @@ function Viewtop(canvas)
         {
             EventsLoopWs();
         }
-        else if (m.Event == "Draw")
-        {
-            // TBD: Use round trip time, but need to preserve event sent time
-            // SetRtt(Date.now() - sendTime); 
-            mRtt = 30; // TBD: Need to call SetRtt.  Just use 20 milliseconds for now.
-            LoadImagesThenQueue(m, m.Seq);
-        }
         else if (m.Event == "Close")
         {
             ShowError(m.Message);
         }
+
+        if (m.Frames !== undefined)            
+            LoadImagesThenQueue(m, m.Seq);
+        if (m.Clip !== undefined)
+            SetClipboard(m.Clip);
     }
 
     // Main event processing loop for websockets
@@ -305,7 +315,7 @@ function Viewtop(canvas)
             {
                 delete mDrawQueue[mDrawSequence];
                 mDrawSequence++;
-                ProcessData(drawBuffer);
+                DrawImages(drawBuffer);
                 drawBuffer = mDrawQueue[mDrawSequence];
             }
 
@@ -373,6 +383,9 @@ function Viewtop(canvas)
     // Load all the images in parallel, then queue the frame to be drawn in the order received
     function LoadImagesThenQueue(drawBuffer, sequence)
     {
+        // TBD: Use round trip time, but need to preserve event sent time
+        mRtt = 20; // TBD: Need to call SetRtt instead: SetRtt(Date.now() - sendTime)
+
         var frames = drawBuffer.Frames;
         var totalImagesLoaded = 0;
         for (var i = 0; i < frames.length; i++)
@@ -405,25 +418,19 @@ function Viewtop(canvas)
         return function () { return f(param1, param2); }
     }
 
-    function ProcessData(drawBuffer)
-    {
-        SetClipboard(drawBuffer);
-        DrawImages(drawBuffer);
-    }
-
     var mClipChangedTime = 0;
-    function SetClipboard(drawBuffer)
+    function SetClipboard(clipboard)
     {
-        var clip = THIS.ClipboardButton;
+        var clipButton = THIS.ClipboardButton;
 
-        if (drawBuffer.Clip.Type == "Text")
+        if (clipboard.Type == "Text")
         {
             // Download text
-            clip.style = "";
-            clip.title = "Download text";
-            clip.setAttribute('href', 'text');
-            clip.setAttribute('download', 'text');
-            clip.onclick = function ()
+            clipButton.style = "";
+            clipButton.title = "Download text";
+            clipButton.setAttribute('href', 'text');
+            clipButton.setAttribute('download', 'text');
+            clipButton.onclick = function ()
             {
                 // Download text, then show message to allow user to copy using CTRL-C
                 HttpGet(CLIP_URL + "?sid=" + mSessionId + "&rid=" + mClipChangedTime,
@@ -436,30 +443,30 @@ function Viewtop(canvas)
                 return false;
             };
         }
-        else if (drawBuffer.Clip.Type == "File")
+        else if (clipboard.Type == "File")
         {
             // Download file
-            clip.style = "";
-            clip.title = "DOWNLOAD FILE: '" + drawBuffer.Clip.FileName + "'"
-                + (drawBuffer.Clip.FileCount == 1 ? "" : ", (" + drawBuffer.Clip.FileCount + " files)");
-            clip.setAttribute('href', CLIP_URL + "?sid=" + mSessionId + "&rid=" + mClipChangedTime);
-            clip.setAttribute('download', drawBuffer.Clip.FileName);
-            clip.onclick = function () { };
+            clipButton.style = "";
+            clipButton.title = "DOWNLOAD FILE: '" + clipboard.FileName + "'"
+                + (clipboard.FileCount == 1 ? "" : ", (" + clipboard.FileCount + " files)");
+            clipButton.setAttribute('href', CLIP_URL + "?sid=" + mSessionId + "&rid=" + mClipChangedTime);
+            clipButton.setAttribute('download', clipboard.FileName);
+            clipButton.onclick = function () { };
         }
-        else if (drawBuffer.Clip.Type == "")
+        else if (clipboard.Type == "")
         {
             // Disabled
-            clip.style = "color:#606060;background:#D0D0D0;border: 1px solid #ADADAD";
-            clip.setAttribute('href', '');
-            clip.setAttribute('download', '');
-            clip.onclick = function () { return false; };
+            clipButton.style = "color:#606060;background:#D0D0D0;border: 1px solid #ADADAD";
+            clipButton.setAttribute('href', '');
+            clipButton.setAttribute('download', '');
+            clipButton.onclick = function () { return false; };
         }
 
         // Flash when new data arrives
-        if (drawBuffer.Clip.Changed)
+        if (clipboard.Changed)
             mClipChangedTime = Date.now();
         if (Date.now() - mClipChangedTime < 250)
-            clip.style = "background:#FFF080;color:#000060;border: 2px solid #B09820";
+            clipButton.style = "background:#FFF080;color:#000060;border: 2px solid #B09820";
     }
 
     function DrawImages(drawBuffer)
@@ -528,13 +535,14 @@ function Viewtop(canvas)
         StopInternal();
         THIS.ErrorCallback(errorMessage);
     }
-    function ShowMessage(errorMessage)
+
+    function ShowMessage(message)
     {
         mContext.fillStyle = '#000';
-        mContext.fillRect(0, 0, mCanvas.width,25);
+        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
         mContext.font = '26px sans-serif';
         mContext.fillStyle = '#88F';
-        mContext.fillText('MSG: ' + errorMessage, 15, 25);
+        mContext.fillText(message, 15, 25);
     }
 
     // Draw an image using a draw string, which is a list of single character

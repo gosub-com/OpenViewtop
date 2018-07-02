@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Text;
 
 namespace Gosub.Viewtop
 {
@@ -19,14 +20,84 @@ namespace Gosub.Viewtop
         [DllImport("user32.dll")]
         public static extern bool GetCursorInfo(out CURSORINFO pci);
 
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool CreatePipe(ref IntPtr hReadPipe, ref IntPtr hWritePipe, ref SECURITY_ATTRIBUTES security, int bufferSize);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool CloseDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, [MarshalAs(UnmanagedType.LPStr)] StringBuilder pvInfo, int nLength, out int lpnLengthNeeded);
+
+        [DllImport("user32", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr OpenWindowStation([MarshalAs(UnmanagedType.LPTStr)] string lpszWinSta,
+                [MarshalAs(UnmanagedType.Bool)] bool fInherit, int dwDesiredAccess);
+
+        [DllImport("user32", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool CloseWindowStation(IntPtr handle);
+
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetProcessWindowStation(IntPtr hWinSta);
+
+        public enum ACCESS_MASK : uint
+        {
+            DELETE = 0x00010000,
+            READ_CONTROL = 0x00020000,
+            WRITE_DAC = 0x00040000,
+            WRITE_OWNER = 0x00080000,
+            SYNCHRONIZE = 0x00100000,
+
+            STANDARD_RIGHTS_REQUIRED = 0x000F0000,
+
+            STANDARD_RIGHTS_READ = 0x00020000,
+            STANDARD_RIGHTS_WRITE = 0x00020000,
+            STANDARD_RIGHTS_EXECUTE = 0x00020000,
+
+            STANDARD_RIGHTS_ALL = 0x001F0000,
+
+            SPECIFIC_RIGHTS_ALL = 0x0000FFFF,
+
+            ACCESS_SYSTEM_SECURITY = 0x01000000,
+
+            MAXIMUM_ALLOWED = 0x02000000,
+
+            GENERIC_READ = 0x80000000,
+            GENERIC_WRITE = 0x40000000,
+            GENERIC_EXECUTE = 0x20000000,
+            GENERIC_ALL = 0x10000000,
+
+            DESKTOP_READOBJECTS = 0x00000001,
+            DESKTOP_CREATEWINDOW = 0x00000002,
+            DESKTOP_CREATEMENU = 0x00000004,
+            DESKTOP_HOOKCONTROL = 0x00000008,
+            DESKTOP_JOURNALRECORD = 0x00000010,
+            DESKTOP_JOURNALPLAYBACK = 0x00000020,
+            DESKTOP_ENUMERATE = 0x00000040,
+            DESKTOP_WRITEOBJECTS = 0x00000080,
+            DESKTOP_SWITCHDESKTOP = 0x00000100,
+
+            WINSTA_ENUMDESKTOPS = 0x00000001,
+            WINSTA_READATTRIBUTES = 0x00000002,
+            WINSTA_ACCESSCLIPBOARD = 0x00000004,
+            WINSTA_CREATEDESKTOP = 0x00000008,
+            WINSTA_WRITEATTRIBUTES = 0x00000010,
+            WINSTA_ACCESSGLOBALATOMS = 0x00000020,
+            WINSTA_EXITWINDOWS = 0x00000040,
+            WINSTA_ENUMERATE = 0x00000100,
+            WINSTA_READSCREEN = 0x00000200,
+
+            WINSTA_ALL_ACCESS = 0x0000037F
+        }
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool CloseHandle(IntPtr handle);
 
         [DllImport("kernel32.dll")]
-        public static extern IntPtr GetCurrentProcess ();
+        public static extern IntPtr GetCurrentProcess();
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool TerminateProcess(IntPtr handle, int exitCode);
@@ -57,10 +128,17 @@ namespace Gosub.Viewtop
             IntPtr hServer, int sessionId, WTS_INFO_CLASS wtsInfoClass, out IntPtr ppBuffer, out uint pBytesReturned);
 
         [DllImport("wtsapi32.dll", SetLastError = true)]
-        public static extern bool WTSQueryUserToken(int sessionId, out IntPtr ppBuffer);
+        public static extern bool WTSQueryUserToken(int sessionId, ref IntPtr ppBuffer);
 
-        [DllImport("advapi32.dll",
-              EntryPoint = "CreateProcessAsUser", SetLastError = true,
+        [DllImport("Userenv.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateEnvironmentBlock(ref IntPtr environment, IntPtr userToken, bool inherit);
+
+        [DllImport("Userenv.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool DestroyEnvironmentBlock(IntPtr environment);
+
+
+
+        [DllImport("advapi32.dll", SetLastError = true,
               CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
         public static extern bool
         CreateProcessAsUser(IntPtr hToken, string lpApplicationName, string lpCommandLine,
@@ -69,26 +147,49 @@ namespace Gosub.Viewtop
                             string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo,
                             ref PROCESS_INFORMATION lpProcessInformation);
 
-        [DllImport("advapi32.dll", EntryPoint = "OpenProcessToken", SetLastError = true)]
+        [DllImport("advapi32.dll",
+              SetLastError = true,
+              CharSet = CharSet.Ansi, CallingConvention = CallingConvention.StdCall)]
+        public static extern bool
+        CreateProcessAsUser(IntPtr hToken, IntPtr lpApplicationName, string lpCommandLine,
+                            IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,
+                            bool bInheritHandle, int dwCreationFlags, IntPtr lpEnvrionment,
+                            IntPtr lpCurrentDirectory, ref STARTUPINFO lpStartupInfo,
+                            ref PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool OpenProcessToken(IntPtr processHandle, int desiredAccess, ref IntPtr tokenHandle);
 
-        [DllImport("advapi32.dll", EntryPoint = "DuplicateTokenEx", SetLastError = true)]
+        [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool DuplicateTokenEx(IntPtr hExistingToken, int dwDesiredAccess,
                            ref SECURITY_ATTRIBUTES lpThreadAttributes,
                            int ImpersonationLevel, int dwTokenType,
                            ref IntPtr phNewToken);
 
-        [DllImport("advapi32.dll", EntryPoint = "DuplicateTokenEx", SetLastError = true)]
+        [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool DuplicateTokenEx(IntPtr hExistingToken, int dwDesiredAccess,
                            IntPtr lpThreadAttributes,
                            int ImpersonationLevel, int dwTokenType,
                            ref IntPtr phNewToken);
 
-        [DllImport("advapi32.dll", EntryPoint = "SetTokenInformation", SetLastError = true)]
+        [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool SetTokenInformation(IntPtr tokenHandle, TOKEN_INFORMATION_CLASS tokenInformationClass,
-                           ref int lpThreadAttributes, int sizeofInt);
+                           ref int tokenInformtion, int sizeofInt);
 
-        [StructLayout(LayoutKind.Sequential)]
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool GetTokenInformation(IntPtr tokenHandle, TOKEN_INFORMATION_CLASS tokenInformationClass,
+                            ref IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool SetThreadToken(IntPtr thread, IntPtr token);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool ImpersonateLoggedOnUser(IntPtr token);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool RevertToSelf();
+
+        [StructLayout(LayoutKind.Sequential)] 
         public struct POINT
         {
             public int X;
@@ -232,6 +333,5 @@ namespace Gosub.Viewtop
             TokenIsRestricted,
             MaxTokenInfoClass
         }
-
     }
 }

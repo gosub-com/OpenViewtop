@@ -109,11 +109,6 @@ namespace Gosub.Viewtop
                 await ProcessOpenViewtopWebSocketsAsync(context.AcceptWebSocket("viewtop"));
                 return;
             }
-            if (request.Target == "/ovt/sessions")
-            {
-                await context.SendResponseAsync(JsonConvert.SerializeObject(Wts.GetSessions(), Formatting.Indented));
-                return;
-            }
             if (request.Target == "/ovt/info")
             {
                 // Do not send when IP address is on the public internet.  TBD: Allow 172.17, etc.

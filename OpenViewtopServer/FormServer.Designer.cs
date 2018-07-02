@@ -1,4 +1,6 @@
-﻿namespace Gosub.Viewtop
+﻿using Gosub.Viewtop;
+
+namespace Gosub.OpenViewtopServer
 {
     partial class FormServer
     {

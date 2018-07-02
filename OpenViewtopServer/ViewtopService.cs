@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 using Gosub.Viewtop;
 using Gosub.Http;
 
-namespace OpenViewtopServer
+namespace Gosub.OpenViewtopServer
 {
     public partial class ViewtopService : ServiceBase
     {
@@ -21,11 +21,13 @@ namespace OpenViewtopServer
         Timer mSessionChangedTimer;
         HttpServer mHttpSeviceServer;
 
-        int mServerSessionId = -1;
-        Wts.Process mServerProcess;
+        WtsProcess mServerProcess;
+
         string mServerPipeName = "";
         NamedPipeServerStream mServerPipe;
-        IAsyncResult mServerPipeAsyncResult;
+
+        const string DEFAULT_DESKTOP = "Default";
+        string mDesktop = DEFAULT_DESKTOP;
 
         object mServiceLock = new object();
         
@@ -41,7 +43,7 @@ namespace OpenViewtopServer
                     return;
                 Log.Write("OnStart");
                 mRunning = true;
-                mSessionChangedTimer = new Timer((obj) => { ServiceRunningTimer(); }, null, 0, 453);
+                mSessionChangedTimer = new Timer((obj) => { ServiceRunningTimer(); }, null, 0, 120);
             }
         }
 
@@ -92,9 +94,8 @@ namespace OpenViewtopServer
                 {
                     if (context.Request.Target == "/ovt/log")
                         return context.SendResponseAsync(Log.GetAsString(200));
-                    if (context.Request.Target == "/ovt/sessions")
-                        return context.SendResponseAsync(JsonConvert.SerializeObject(Wts.GetSessions(), Formatting.Indented));
-                    throw new HttpException(404, "File not found");
+                    Log.Write("FILE NOT FOUND: " + context.Request.Target);
+                    return context.SendResponseAsync("File not found: " + context.Request.Target, 404);
                 };
                 mHttpSeviceServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT));
             }
@@ -116,10 +117,18 @@ namespace OpenViewtopServer
                     Log.Write("Process has stopped.  Restarting.");
                     KillServerProcess(false);
                 }
-
                 var sessionId = Wts.GetActiveConsoleSessionId();
-                if (sessionId <= 0 || sessionId == mServerSessionId)
-                    return;
+                if (sessionId <= 0
+                    || mServerProcess != null
+                         && sessionId == mServerProcess.SessionId
+                         && Wts.GetSessionDomainName(sessionId) == mServerProcess.DomainName
+                         && Wts.GetSessionUserName(sessionId) == mServerProcess.UserName)
+                {                    
+                    return; // No change to session (or invalid session ID)
+                }
+
+
+                Log.Write("Session changed, id=" + sessionId + ", user=" + Wts.GetSessionUserName(sessionId));
 
                 // Kill process, then start a new one
                 KillServerProcess(false);
@@ -138,7 +147,7 @@ namespace OpenViewtopServer
             {
                 mServerPipeName = "OpenViewtop_" + Util.GenerateRandomId();
                 mServerPipe = new NamedPipeServerStream(mServerPipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                mServerPipeAsyncResult = mServerPipe.BeginWaitForConnection(null, null);
+                Task.Run(() => { WaitForPipeCommand(mServerPipe); });
             }
             catch (Exception ex)
             {
@@ -146,12 +155,60 @@ namespace OpenViewtopServer
                 try { mServerPipe.Dispose(); } catch { }
                 mServerPipeName = "(error)";
                 mServerPipe = null;
-                mServerPipeAsyncResult = null;
             }
-            Log.Write("Starting process on session " + sessionId + ", pipe=" + mServerPipeName);
-            mServerProcess = Wts.Process.CreateProcessAsUser(sessionId, System.Windows.Forms.Application.ExecutablePath,
-                Program.PARAM_SERVER + " " + Program.PARAM_CONTROL_PIPE + " " + mServerPipeName);
-            mServerSessionId = sessionId;
+
+            // It seems like there should be a way to query the active desktop
+            // from the service.  Since there doesn't seem to be one, we'll
+            // let the application tell us which desktop is the active one
+            var desktop = mDesktop;
+            mDesktop = DEFAULT_DESKTOP;
+            if (desktop.ToLower().Contains("$error"))
+            {
+                // Use the default desktop if there was an error
+                Log.Write("Error retriving desktop name from client: " + desktop);
+                desktop = DEFAULT_DESKTOP;
+            }
+
+            Log.Write("***Starting process on session " + sessionId + ", pipe=" + mServerPipeName + ", desktop=" + desktop);
+            mServerProcess = WtsProcess.StartAsUser(sessionId, true,
+                System.Windows.Forms.Application.ExecutablePath,
+                Program.PARAM_SERVER + " " + Program.PARAM_CONTROL_PIPE + " " + mServerPipeName + " " 
+                + Program.PARAM_DESKTOP + " \"" + desktop + "\"", 
+                desktop);
+        }
+
+
+        /// <summary>
+        /// Called in a background thread to process info from server
+        /// </summary>
+        async void WaitForPipeCommand(NamedPipeServerStream pipe)
+        {
+            try
+            {
+                Log.Write("Wait for pipe connect");
+                await Task.Factory.FromAsync(pipe.BeginWaitForConnection, pipe.EndWaitForConnection, null);
+                Log.Write("Got pipe connect");
+                var sr = new StreamReader(pipe);
+                string desktop = await sr.ReadLineAsync();
+
+                Log.Write("Desktop change, desktop=" + desktop);
+                if (desktop.Trim() != "")
+                    lock (mServiceLock)
+                        mDesktop = desktop;                
+                // NOTE: For the time being we only ever get one thing from the server, and
+                //       that is the name of the active desktop
+            }
+            catch (ObjectDisposedException)
+            {
+                // The program exited
+                Log.Write("Pipe closed by server");
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Error reading from pipe", ex);
+            }
+            // Exit without closing the pipe.  It will be closed by KillServerProcess.
+            //CheckSessionChanged();
         }
 
         private void KillServerProcess(bool wait)
@@ -159,16 +216,14 @@ namespace OpenViewtopServer
             var process = mServerProcess;
             var pipeName = mServerPipeName;
             var pipe = mServerPipe;
-            var pipeResult = mServerPipeAsyncResult;
-            mServerSessionId = -1;
             mServerProcess = null;
             mServerPipeName = "";
             mServerPipe = null;
-            mServerPipeAsyncResult = null;
 
             if (process != null)
                 Log.Write("Kill server, pipe=" + pipeName + ", alive=" + process.IsRunning);
 
+            // Quick exit if process is not running
             if (process == null || !process.IsRunning)
             {
                 if (process != null)
@@ -178,23 +233,24 @@ namespace OpenViewtopServer
                 return;
             }
 
-            if (pipe == null || pipeResult == null || !pipeResult.IsCompleted)
+            // Force kill the process if the pipe is not connected
+            if (pipe == null || !pipe.IsConnected)
             {
-                Log.Write("Pipe not connected, can't gracefully kill process");
-                if (process.IsRunning)
-                    Log.Write("FORCE KILL SERVER, pipe=" + pipeName + ", alive=" + process.IsRunning);
+                // NOTE: Pipe was connected by WaitForPipeCommand
+                Log.Write("FORCE KILL SERVER because pipe is not connected, pipe=" + pipeName + ", alive=" + process.IsRunning);
                 process.Terminate(0);
                 process.Dispose();
                 if (pipe != null)
                     pipe.Dispose();
+                return;
             }
 
+            // We have a connected pipe and running server.
             // Send close command in background thread
             Task.Run(async () => 
             {
                 try
                 {
-                    pipe.EndWaitForConnection(pipeResult);
                     var sw = new StreamWriter(pipe);
                     await sw.WriteLineAsync("close");
                     await sw.FlushAsync();
@@ -205,19 +261,26 @@ namespace OpenViewtopServer
                 }
             });
 
-            // Wait for it to kill itself gracefully
+            // Wait for it to exit gracefully, but kill it if still running after one second
             var task = Task.Run(async () => 
             {
-                // Give it up to one second to kill itslef
-                var now = DateTime.Now;
-                while ((DateTime.Now - now).TotalMilliseconds < 1000 && process.IsRunning)
-                    await Task.Delay(10);
+                try
+                {
+                    // Give it up to one second to kill itslef
+                    var now = DateTime.Now;
+                    while ((DateTime.Now - now).TotalMilliseconds < 1000 && process.IsRunning)
+                        await Task.Delay(10);
 
-                if (process.IsRunning)
-                    Log.Write("FORCE KILL SERVER, pipe=" + pipeName + ", alive=" + process.IsRunning);
-                process.Terminate(0);
-                process.Dispose();
-                pipe.Dispose();
+                    if (process.IsRunning)
+                        Log.Write("FORCE KILL SERVER after sending cose command, pipe=" + pipeName + ", alive=" + process.IsRunning);
+                    process.Terminate(0);
+                    process.Dispose();
+                    pipe.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("Cant kill process", ex);
+                }
             });
 
             if (wait)

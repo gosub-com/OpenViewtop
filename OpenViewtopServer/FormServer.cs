@@ -12,9 +12,9 @@ using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
 using Gosub.Http;
-using OpenViewtopServer;
+using Gosub.Viewtop;
 
-namespace Gosub.Viewtop
+namespace Gosub.OpenViewtopServer
 {
     public partial class FormServer : Form
     {
@@ -41,6 +41,11 @@ namespace Gosub.Viewtop
         const int TRAY_ICON_RETRIES = 30;
         const int TRAY_ICON_RETRY_TIME = 5;
         int mTrayIconRetryCount;
+
+        Point mLocation;
+        Size mSize;
+        bool mExiting;
+        NamedPipeClientStream mNamedPipe;
 
         int mHttpPort;
         int mHttpsPort;
@@ -78,9 +83,15 @@ namespace Gosub.Viewtop
             Clip.GuiThreadControl = this;
             mHttpPort = mDebug ? HTTP_PORT_DEBUG : HTTP_PORT;
             mHttpsPort = mDebug ? HTTPS_PORT_DEBUG : HTTPS_PORT;
-            if (!mDebug)
-                Hide();
+
+            // Do not flash the form when it is first displayed
+            mLocation = Location;
+            mSize = Size;
+            StartPosition = FormStartPosition.Manual;
+            Location = new Point(-10000, -10000);
+            Size = new Size();
         }
+
 
         private void FormMain_Shown(object sender, EventArgs e)
         {
@@ -96,13 +107,14 @@ namespace Gosub.Viewtop
             catch (Exception ex)
             {
                 Log.Write("Application start error", ex);
-                MessageBox.Show(this, "Error loading application: " + ex.Message, App.Name);
-                Application.Exit();
+                MessageBox.Show(this, "Error loading Open Viewtop: " + ex.Message, App.Name);
             }
             timerRunSystem.Interval = 10;
             timerRunSystem.Enabled = true;
             timerUpdateBeacon.Enabled = true;
-            ExecuteNamedPipeCommand();
+            Task.Run(() => ExecuteNamedPipeCommand());
+            Location = mLocation;
+            Size = mSize;
         }
 
         private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
@@ -113,9 +125,19 @@ namespace Gosub.Viewtop
                 e.Cancel = true;
                 return;
             }
+            ApplicationExit();
+        }
+
+        void ApplicationExit()
+        {
+            if (mExiting)
+                return;
+            mExiting = true;
             try { mHttpServer.Stop(); } catch { }
-            try { mBeacon.Stop(); } catch {  }
+            try { mBeacon.Stop(); } catch { }
             try { Settings.Save(mSettings); } catch { }
+            try { mNamedPipe.Close(); } catch { }
+            Application.Exit();
         }
 
         /// <summary>
@@ -139,20 +161,46 @@ namespace Gosub.Viewtop
             Log.Write("Named pipe: " + ControlPipe);
             try
             {
-                var np = new NamedPipeClientStream(ControlPipe);
+                var np = new NamedPipeClientStream(".", ControlPipe, PipeDirection.InOut, PipeOptions.Asynchronous);
+                mNamedPipe = np;
                 await Task.Run(() => { np.Connect(); });
                 Log.Write("Named pipe connected");
+                ExitWhenDesktopChanges(np);
                 var control = new StreamReader(np);
-                while (true)
+                while (!mExiting)
                 {
                     var message = await control.ReadLineAsync();
                     if (message == "close")
-                        Application.Exit();
+                        ApplicationExit();
                 }
             }
             catch (Exception ex)
             {
                 Log.Write("Named pipe exception", ex);
+            }
+        }
+
+        /// <summary>
+        /// Monitor desktop, and exit if it changes
+        /// </summary>
+        async void ExitWhenDesktopChanges(NamedPipeClientStream np)
+        {
+            if (Program.ParamDesktop == "")
+                return;
+
+            while (!mExiting)
+            {
+                await Task.Delay(50);
+                var desktop = Wts.GetDesktopName();
+                if (desktop.ToLower() != Program.ParamDesktop.ToLower())
+                {
+                    var control = new StreamWriter(np);
+                    await control.WriteLineAsync(desktop);
+                    await control.FlushAsync();
+                    np.Close();
+                    ApplicationExit();
+                    return;
+                }
             }
         }
 
@@ -198,7 +246,7 @@ namespace Gosub.Viewtop
             try
             {
                 mPeerInfo.ComputerName = Dns.GetHostName();
-                mPeerInfo.Name = textName.Text;
+                mPeerInfo.Name = textName.Text + (mDebug ? " - DEBUG" : "");
                 mPeerInfo.HttpsPort = mHttpsPort.ToString();
                 mPeerInfo.HttpPort = mHttpPort.ToString();
                 mBeacon = new Beacon();
@@ -283,13 +331,36 @@ namespace Gosub.Viewtop
         private void labelSecureLink_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
             if (e.Link.LinkData != null)
-                Process.Start(e.Link.LinkData.ToString());
+                ProcessStartAsLoggedOnUser(e.Link.LinkData.ToString());
         }
 
         private void labelUnsecureLink_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
             if (e.Link.LinkData != null)
-                Process.Start(e.Link.LinkData.ToString());
+                ProcessStartAsLoggedOnUser(e.Link.LinkData.ToString());
+        }
+
+        /// <summary>
+        /// Don't launch using Process.Start, or else it runs as "System"
+        /// </summary>
+        void ProcessStartAsLoggedOnUser(string fileName)
+        {
+            if (Debugger.IsAttached)
+            {
+                Process.Start(fileName);
+                return;
+            }
+           
+            try
+            {
+                // Launch from helper task running as the user, also with the user environment
+                WtsProcess.StartAsUser(Wts.GetActiveConsoleSessionId(), false,
+                    Application.ExecutablePath, Program.PARAM_START_BROWSER +  " \"" + fileName + "\"").Dispose();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Error launching browser: " + ex.Message, App.Name);
+            }
         }
 
         void StartWebServer()
@@ -438,7 +509,7 @@ namespace Gosub.Viewtop
 
         private void textName_TextChanged(object sender, EventArgs e)
         {
-            mPeerInfo.Name = textName.Text;
+            mPeerInfo.Name = textName.Text + (mDebug ? " - DEBUG" : "");
             mSettings.Name = textName.Text;
             mOvtServer.LocalComputerInfo.Name = textName.Text;
         }
@@ -497,6 +568,7 @@ namespace Gosub.Viewtop
             if (mBeacon != null)
                 mBeacon.Update();
         }
+
 
         private void timerRunSystem_Tick(object sender, EventArgs e)
         {
@@ -617,15 +689,16 @@ namespace Gosub.Viewtop
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
-            Process.Start(((GridLink)gridRemote[e.ColumnIndex, e.RowIndex].Value).Link);
+            ProcessStartAsLoggedOnUser(((GridLink)gridRemote[e.ColumnIndex, e.RowIndex].Value).Link);
             while (gridRemote.SelectedRows.Count != 0)
                 gridRemote.SelectedRows[0].Selected = false;
         }
 
         private void buttonRefreshRemoteComputers_Click(object sender, EventArgs e)
         {
-            mBeacon.Stop();
-            mBeacon = new Beacon();
+            try { mBeacon.Stop(); }
+            catch { }
+            mBeacon = null;
             mPeers.Clear();
             gridRemote.Rows.Clear();
             StartBeacon();

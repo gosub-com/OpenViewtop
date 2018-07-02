@@ -8,9 +8,9 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTitle("Open Viewtop")]
 [assembly: AssemblyDescription("Remote Desktop Viewer")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Gosub")]
+[assembly: AssemblyCompany("Gosub Software")]
 [assembly: AssemblyProduct("Open Viewtop")]
-[assembly: AssemblyCopyright("Copyright ©  2017")]
+[assembly: AssemblyCopyright("Copyright ©  2018")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 

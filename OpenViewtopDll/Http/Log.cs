@@ -39,7 +39,7 @@ namespace Gosub.Http
 
         static void Add(string message)
         {
-            message = DateTime.Now + " - " + message;
+            message = DateTime.Now.ToString("yyyy/MM/dd HH:mm:ss.fff") + " - " + message;
             lock (mLog)
             {
                 mLog.Enqueue(message);

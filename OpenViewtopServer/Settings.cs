@@ -17,10 +17,18 @@ namespace Gosub.Viewtop
 
         public static Settings Load()
         {
-            var fileName = Path.Combine(Application.CommonAppDataPath, SETTINGS_FILE_NAME);
-            if (!File.Exists(fileName))
+            try
+            {
+                var fileName = Path.Combine(Application.CommonAppDataPath, SETTINGS_FILE_NAME);
+                if (!File.Exists(fileName))
+                    return new Settings();
+                var settings = JsonConvert.DeserializeObject<Settings>(File.ReadAllText(fileName));
+                return settings == null ? new Settings() : settings;
+            }
+            catch
+            {
                 return new Settings();
-            return JsonConvert.DeserializeObject<Settings>(File.ReadAllText(fileName));
+            }
         }
 
         public static void Save(Settings settings)

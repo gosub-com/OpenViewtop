@@ -98,7 +98,7 @@ namespace Gosub.Http
             if (mResponse.HeaderSent)
                 throw new HttpException(500, "Websocket cannot accept connection after http header was already sent");
             if (mWebSocket != null)
-                throw new HttpException(404, "Websocket connection was already accepted");
+                throw new HttpException(500, "Websocket connection was already accepted");
 
             mTcpClient.NoDelay = true;
             mWebSocket = new WebSocket(this, mReader, mWriter, protocol);
@@ -288,7 +288,11 @@ namespace Gosub.Http
         async public Task SendFileAsync(string path)
         {
             if (!File.Exists(path))
-                throw new HttpException(404, "File not found", true);
+            {
+                Log.Write("FILE NOT FOUND: " + path);
+                await SendResponseAsync("File not found: " + path, 404);
+                return;
+            }
             using (var stream = File.OpenRead(path))
                 await GetWriter(stream.Length).WriteAsync(stream);
         }
