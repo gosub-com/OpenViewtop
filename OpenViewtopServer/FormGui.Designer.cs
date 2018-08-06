@@ -2,7 +2,7 @@
 
 namespace Gosub.OpenViewtopServer
 {
-    partial class FormServer
+    partial class FormGui
     {
         /// <summary>
         /// Required designer variable.
@@ -31,7 +31,7 @@ namespace Gosub.OpenViewtopServer
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormServer));
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(FormGui));
             this.labelSecureLink = new System.Windows.Forms.LinkLabel();
             this.labelUnsecureLink = new System.Windows.Forms.LinkLabel();
             this.listUsers = new System.Windows.Forms.ListBox();
@@ -277,9 +277,9 @@ namespace Gosub.OpenViewtopServer
             this.MinimizeBox = false;
             this.Name = "FormServer";
             this.Text = "Open Viewtop";
-            this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormMain_FormClosing);
-            this.Load += new System.EventHandler(this.FormMain_Load);
-            this.Shown += new System.EventHandler(this.FormMain_Shown);
+            this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormGui_FormClosing);
+            this.Load += new System.EventHandler(this.FormGui_Load);
+            this.Shown += new System.EventHandler(this.FormGui_Shown);
             this.groupBox2.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.gridRemote)).EndInit();
             this.ResumeLayout(false);

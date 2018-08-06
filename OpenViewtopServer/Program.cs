@@ -90,7 +90,7 @@ namespace Gosub.OpenViewtopServer
             if (ParamIsService)
             {
                 // Server service
-                ServiceBase.Run(new ViewtopService());
+                ServiceBase.Run(new Service());
                 return;
             }
 
@@ -104,7 +104,7 @@ namespace Gosub.OpenViewtopServer
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            var form = new FormServer();
+            var form = new FormGui();
 
             // Just run under debugger
             if (Debugger.IsAttached)

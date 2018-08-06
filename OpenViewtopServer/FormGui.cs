@@ -16,7 +16,7 @@ using Gosub.Viewtop;
 
 namespace Gosub.OpenViewtopServer
 {
-    public partial class FormServer : Form
+    public partial class FormGui : Form
     {
         const int HTTP_PORT = 8151;
         const int HTTPS_PORT = 8152;
@@ -65,12 +65,12 @@ namespace Gosub.OpenViewtopServer
             public string HttpPort = "";
         }
 
-        public FormServer()
+        public FormGui()
         {
             InitializeComponent();
         }
 
-        private void FormMain_Load(object sender, EventArgs e)
+        private void FormGui_Load(object sender, EventArgs e)
         {
             Text = App.Name + ", version " + App.Version + (mDebug ? " - DEBUG" : "");
             labelSecureLink.Text = "Starting...";
@@ -90,7 +90,7 @@ namespace Gosub.OpenViewtopServer
         }
 
 
-        private void FormMain_Shown(object sender, EventArgs e)
+        private void FormGui_Shown(object sender, EventArgs e)
         {
             try
             {
@@ -143,7 +143,7 @@ namespace Gosub.OpenViewtopServer
             }
         }
 
-        private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
+        private void FormGui_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (e.CloseReason == CloseReason.UserClosing && !mDebug)
             {

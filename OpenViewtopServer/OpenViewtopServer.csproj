@@ -75,11 +75,11 @@
     <Compile Include="FormDesktopWatcher.Designer.cs">
       <DependentUpon>FormDesktopWatcher.cs</DependentUpon>
     </Compile>
-    <Compile Include="FormServer.cs">
+    <Compile Include="FormGui.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="FormServer.Designer.cs">
-      <DependentUpon>FormServer.cs</DependentUpon>
+    <Compile Include="FormGui.Designer.cs">
+      <DependentUpon>FormGui.cs</DependentUpon>
     </Compile>
     <Compile Include="FormPassword.cs">
       <SubType>Form</SubType>
@@ -97,14 +97,14 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="ProcessManager.cs" />
     <Compile Include="Settings.cs" />
-    <Compile Include="ViewtopService.cs">
+    <Compile Include="Service.cs">
       <SubType>Component</SubType>
     </Compile>
     <EmbeddedResource Include="FormDesktopWatcher.resx">
       <DependentUpon>FormDesktopWatcher.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="FormServer.resx">
-      <DependentUpon>FormServer.cs</DependentUpon>
+    <EmbeddedResource Include="FormGui.resx">
+      <DependentUpon>FormGui.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="FormPassword.resx">
       <DependentUpon>FormPassword.cs</DependentUpon>

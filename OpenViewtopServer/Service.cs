@@ -13,7 +13,7 @@ using Gosub.Http;
 
 namespace Gosub.OpenViewtopServer
 {
-    public partial class ViewtopService : ServiceBase
+    public partial class Service : ServiceBase
     {
         const int HTTP_PORT = 8157;
         const int PROCESS_TERMINATE_TIMEOUT_MS = 1000;
@@ -38,7 +38,7 @@ namespace Gosub.OpenViewtopServer
 
         object mServiceLock = new object();
         
-        public ViewtopService()
+        public Service()
         {
         }
 
