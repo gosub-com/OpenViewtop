@@ -16,18 +16,25 @@ namespace Gosub.OpenViewtopServer
     public partial class ViewtopService : ServiceBase
     {
         const int HTTP_PORT = 8157;
+        const int PROCESS_TERMINATE_TIMEOUT_MS = 1000;
 
         bool mRunning;
         Timer mSessionChangedTimer;
         HttpServer mHttpSeviceServer;
 
-        WtsProcess mServerProcess;
+        ProcessManager mGuiMan;
+        WtsProcess mGuiProcess;
+        ProcessManager mDesktopMan;
+        WtsProcess mDesktopProcess;
 
-        string mServerPipeName = "";
-        NamedPipeServerStream mServerPipe;
 
         const string DEFAULT_DESKTOP = "Default";
         string mDesktop = DEFAULT_DESKTOP;
+        string mGuiLaunchDesktop = "";
+        int mSessionId;
+        string mDomainName = "";
+        string mUserName = "";
+
 
         object mServiceLock = new object();
         
@@ -43,7 +50,7 @@ namespace Gosub.OpenViewtopServer
                     return;
                 Log.Write("OnStart");
                 mRunning = true;
-                mSessionChangedTimer = new Timer((obj) => { ServiceRunningTimer(); }, null, 0, 120);
+                mSessionChangedTimer = new Timer((obj) => { CheckServiceRunning(); }, null, 0, 120);
             }
         }
 
@@ -62,14 +69,16 @@ namespace Gosub.OpenViewtopServer
                 catch { }
                 mSessionChangedTimer = null;
                 mHttpSeviceServer = null;
-                KillServerProcess(true);
+
+                TerminateProcess(ref mGuiProcess, ref mGuiMan, true);
+                TerminateProcess(ref mDesktopProcess, ref mDesktopMan, true);
             }
         }
 
         /// <summary>
         /// Called periodically to ensure everything is running properly
         /// </summary>
-        void ServiceRunningTimer()
+        void CheckServiceRunning()
         {
             lock (mServiceLock)
             {
@@ -77,7 +86,7 @@ namespace Gosub.OpenViewtopServer
                     return;
 
                 CheckHttpServerRunning();
-                CheckSessionChanged();
+                CheckSessionOrDesktopChanged();
             }
         }
 
@@ -108,183 +117,229 @@ namespace Gosub.OpenViewtopServer
             }
         }
 
-        private void CheckSessionChanged()
+        private void CheckSessionOrDesktopChanged()
         {
             try
             {
-                if (mServerProcess != null && !mServerProcess.IsRunning)
+                // Check for GUI process stopped
+                if (mGuiProcess != null && !mGuiProcess.IsRunning)
                 {
-                    Log.Write("Process has stopped.  Restarting.");
-                    KillServerProcess(false);
+                    Log.Write("GUI process has stopped for unknown reason.");
+                    TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
                 }
+                // Check for DESKTOP process stopped
+                if (mDesktopProcess != null && !mDesktopProcess.IsRunning)
+                {
+                    Log.Write("DESKTOP process has stopped for unknown reason.");
+                    TerminateProcess(ref mDesktopProcess, ref mDesktopMan, false);
+                }
+                // Check for desktop changed
+                if (mDesktop != mGuiLaunchDesktop && mGuiProcess != null)
+                {
+                    Log.Write("Stopping GUI process because desktop changed from '" + mGuiLaunchDesktop + "' to '" + mDesktop);
+                    TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
+                }
+                // Check for session changed
                 var sessionId = Wts.GetActiveConsoleSessionId();
-                if (sessionId <= 0
-                    || mServerProcess != null
-                         && sessionId == mServerProcess.SessionId
-                         && Wts.GetSessionDomainName(sessionId) == mServerProcess.DomainName
-                         && Wts.GetSessionUserName(sessionId) == mServerProcess.UserName)
-                {                    
-                    return; // No change to session (or invalid session ID)
+                var domainName = Wts.GetSessionDomainName(sessionId);
+                var userName = Wts.GetSessionUserName(sessionId);
+
+                if (sessionId != mSessionId || domainName != mDomainName || userName != mUserName)
+                {
+                    mSessionId = sessionId;
+                    mDomainName = domainName;
+                    mUserName = userName;
+                    if (mGuiProcess != null || mDesktopProcess != null)
+                        Log.Write("Stopping GUI and DESKTOP processes because id or user changed, id=" + sessionId + ", user=" + Wts.GetSessionUserName(sessionId));
+                    TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
+                    TerminateProcess(ref mDesktopProcess, ref mDesktopMan, false);
+
+                    if (sessionId < 0)
+                        Log.Write("*** No active session, not starting GUI or DESKTOP processes ***");
                 }
 
-
-                Log.Write("Session changed, id=" + sessionId + ", user=" + Wts.GetSessionUserName(sessionId));
-
-                // Kill process, then start a new one
-                KillServerProcess(false);
-                StartServerProcess(sessionId);
-            }
-            catch (Exception ex2)
-            {
-                // TBD: Use event log
-                Log.Write("Error checking session changed", ex2);
-            }
-        }
-
-        private void StartServerProcess(int sessionId)
-        {
-            try
-            {
-                mServerPipeName = "OpenViewtop_" + Util.GenerateRandomId();
-                mServerPipe = new NamedPipeServerStream(mServerPipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-                Task.Run(() => { WaitForPipeCommand(mServerPipe); });
+                // Ensure processes are running
+                if (mGuiProcess == null && sessionId >= 0)
+                    StartGuiProcess(sessionId);
+                if (mDesktopProcess == null && sessionId >= 0)
+                    StartDesktopWatcherProcess(sessionId);
             }
             catch (Exception ex)
             {
-                Log.Write("Error opening pipe", ex);
-                try { mServerPipe.Dispose(); } catch { }
-                mServerPipeName = "(error)";
-                mServerPipe = null;
+                // TBD: Use event log
+                Log.Write("Error checking session changed", ex);
             }
-
-            // It seems like there should be a way to query the active desktop
-            // from the service.  Since there doesn't seem to be one, we'll
-            // let the application tell us which desktop is the active one
-            var desktop = mDesktop;
-            mDesktop = DEFAULT_DESKTOP;
-            if (desktop.ToLower().Contains("$error"))
-            {
-                // Use the default desktop if there was an error
-                Log.Write("Error retriving desktop name from client: " + desktop);
-                desktop = DEFAULT_DESKTOP;
-            }
-
-            Log.Write("***Starting process on session " + sessionId + ", pipe=" + mServerPipeName + ", desktop=" + desktop);
-            mServerProcess = WtsProcess.StartAsUser(sessionId, true,
-                System.Windows.Forms.Application.ExecutablePath,
-                Program.PARAM_SERVER + " " + Program.PARAM_CONTROL_PIPE + " " + mServerPipeName + " " 
-                + Program.PARAM_DESKTOP + " \"" + desktop + "\"", 
-                desktop);
         }
 
+        void StartGuiProcess(int sessionId)
+        {
+            TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
+
+
+            var desktop = mDesktop;
+            mGuiLaunchDesktop = desktop;
+            var pipeName = "OpenViewtop_gui_" + Util.GenerateRandomId();
+
+            // When on the default desktop, run as the user so the clipboard works properly.
+            // For other desktops we need to run as system so the GUI has permission to copy the screen.
+            // TBD: Seems like there should be a better way to do this
+            WtsProcessType processType = desktop.ToLower() != DEFAULT_DESKTOP.ToLower() || sessionId == 0 
+                                            ? WtsProcessType.System : WtsProcessType.UserFallbackToSystem;
+            processType |= WtsProcessType.Admin | WtsProcessType.UIAccess;
+
+            // Mange process communications
+            mGuiMan = new ProcessManager(pipeName, true);
+            Task.Run(() => { ProcessRemoteCommunications(mGuiMan, "GUI"); });
+
+            Log.Write("*** Starting GUI: Session=" + sessionId + ", User=" + mUserName + ", Desktop=" + desktop + ", Pipe=" + pipeName);
+            mGuiProcess = WtsProcess.StartInSession(
+                sessionId, processType,
+                System.Windows.Forms.Application.ExecutablePath,
+                Program.PARAM_GUI + " " + Program.PARAM_CONTROL_PIPE + " " + pipeName, desktop);
+
+        }
+
+        void StartDesktopWatcherProcess(int sessionId)
+        {
+            TerminateProcess(ref mDesktopProcess, ref mDesktopMan, false);
+
+            // Create new process
+            mDesktop = DEFAULT_DESKTOP; // If anything goes wrong, just use the default desktop
+            var pipeName = "OpenViewtop_desktop_" + Util.GenerateRandomId();
+
+            // Manage communications
+            mDesktopMan = new ProcessManager(pipeName, true);
+            Task.Run(() => { ProcessRemoteCommunications(mDesktopMan, "DESKTOP"); });
+
+            Log.Write("*** Starting DESKTOP: Session=" + sessionId + ", User=" + mUserName + ", Pipe=" + pipeName);
+            mDesktopProcess = WtsProcess.StartInSession(
+                sessionId, WtsProcessType.System,
+                System.Windows.Forms.Application.ExecutablePath,
+                Program.PARAM_WATCH_DESKTOP + " " + Program.PARAM_CONTROL_PIPE + " " + pipeName);
+        }
 
         /// <summary>
-        /// Called in a background thread to process info from server
+        /// Monitor GUI and DESKTOP processes
         /// </summary>
-        async void WaitForPipeCommand(NamedPipeServerStream pipe)
+        async void ProcessRemoteCommunications(ProcessManager manager, string processName)
         {
             try
             {
-                Log.Write("Wait for pipe connect");
-                await Task.Factory.FromAsync(pipe.BeginWaitForConnection, pipe.EndWaitForConnection, null);
-                Log.Write("Got pipe connect");
-                var sr = new StreamReader(pipe);
-                string desktop = await sr.ReadLineAsync();
-
-                Log.Write("Desktop change, desktop=" + desktop);
-                if (desktop.Trim() != "")
-                    lock (mServiceLock)
-                        mDesktop = desktop;                
-                // NOTE: For the time being we only ever get one thing from the server, and
-                //       that is the name of the active desktop
+                await manager.WaitForConnection();
+                var command = "";
+                while (command != ProcessManager.COMMAND_CLOSING)
+                {
+                    command = await manager.ReadCommandAsync();
+                    if (command == ProcessManager.COMMAND_CONNECTED)
+                        Log.Write(processName + " process connected on pipe " + manager.PipeName);
+                    else if (command == ProcessManager.COMMAND_CLOSING)
+                        Log.Write(processName + " process closing on pipe " + manager.PipeName);
+                    else if (!command.StartsWith("$"))
+                    {
+                        // For now, all non-control commands are just the desktop name
+                        if (command != mDesktop)
+                        {
+                            Log.Write("Desktop changed to: " + command);
+                            mDesktop = command;
+                            CheckServiceRunning();  // Restart GUI on new desktop
+                        }
+                    }
+                }
             }
             catch (ObjectDisposedException)
             {
-                // The program exited
-                Log.Write("Pipe closed by server");
+                Log.Write(processName + " pipe closed by other thread or remote process: Pipe=" + manager.PipeName);
             }
             catch (Exception ex)
             {
-                Log.Write("Error reading from pipe", ex);
+                Log.Write(processName + " process exception: Pipe=" + manager.PipeName, ex);
             }
-            // Exit without closing the pipe.  It will be closed by KillServerProcess.
-            //CheckSessionChanged();
+            CheckServiceRunning();
         }
 
-        private void KillServerProcess(bool wait)
+        /// <summary>
+        /// End the task gracefully if possible, forcefully if necessesary.
+        /// Disposes both the pipe and the process when done.
+        /// Wait up to timeoutMs milliseconds for the application to close itself.
+        /// This is optionally a blocking call, but can also be a "fire and forget"
+        /// function by setting block=false.  
+        /// </summary>
+        void TerminateProcess(ref WtsProcess refProcess, ref ProcessManager refManager, bool block)
         {
-            var process = mServerProcess;
-            var pipeName = mServerPipeName;
-            var pipe = mServerPipe;
-            mServerProcess = null;
-            mServerPipeName = "";
-            mServerPipe = null;
-
-            if (process != null)
-                Log.Write("Kill server, pipe=" + pipeName + ", alive=" + process.IsRunning);
+            var process = refProcess;
+            var manager = refManager;
+            refProcess = null;
+            refManager = null;
 
             // Quick exit if process is not running
             if (process == null || !process.IsRunning)
             {
                 if (process != null)
                     process.Dispose();
-                if (pipe != null)
-                    pipe.Dispose();
+                if (manager != null)
+                    manager.Close();
                 return;
             }
 
             // Force kill the process if the pipe is not connected
-            if (pipe == null || !pipe.IsConnected)
+            if (manager == null || !manager.IsConnected)
             {
                 // NOTE: Pipe was connected by WaitForPipeCommand
-                Log.Write("FORCE KILL SERVER because pipe is not connected, pipe=" + pipeName + ", alive=" + process.IsRunning);
+                Log.Write("FORCE KILL process because pipe is not connected: Pipe=" + manager.PipeName);
                 process.Terminate(0);
                 process.Dispose();
-                if (pipe != null)
-                    pipe.Dispose();
+                if (manager != null)
+                    manager.Close();
                 return;
             }
 
-            // We have a connected pipe and running server.
-            // Send close command in background thread
-            Task.Run(async () => 
+            // Send the process a request to close in background thread
+            Log.Write("Closing process: Pipe=" + manager.PipeName);
+            Task.Run(async () =>
             {
                 try
                 {
-                    var sw = new StreamWriter(pipe);
-                    await sw.WriteLineAsync("close");
-                    await sw.FlushAsync();
+                    await manager.SendCommandAsync(ProcessManager.COMMAND_CLOSE);
                 }
                 catch (Exception ex)
                 {
-                    Log.Write("Error sending close command", ex);
+                    Log.Write("Exception sending close command", ex);
                 }
             });
 
-            // Wait for it to exit gracefully, but kill it if still running after one second
-            var task = Task.Run(async () => 
+            // Wait for it to exit gracefully, but kill it if still running after the timeout
+            var task = Task.Run(async () =>
             {
                 try
                 {
                     // Give it up to one second to kill itslef
                     var now = DateTime.Now;
-                    while ((DateTime.Now - now).TotalMilliseconds < 1000 && process.IsRunning)
+                    while ((DateTime.Now - now).TotalMilliseconds < PROCESS_TERMINATE_TIMEOUT_MS && process.IsRunning)
                         await Task.Delay(10);
 
                     if (process.IsRunning)
-                        Log.Write("FORCE KILL SERVER after sending cose command, pipe=" + pipeName + ", alive=" + process.IsRunning);
-                    process.Terminate(0);
+                    {
+                        Log.Write("FORCE KILL process after sending cose command: Pipe=" + manager.PipeName);
+                        process.Terminate(0);
+                    }
+                    else
+                    {
+                        Log.Write("Process closed gracefully: Pipe=" + manager.PipeName);
+                    }
                     process.Dispose();
-                    pipe.Dispose();
+                    manager.Close();
                 }
                 catch (Exception ex)
                 {
-                    Log.Write("Cant kill process", ex);
+                    Log.Write("Cant kill process: Pipe=" + manager.PipeName, ex);
                 }
             });
 
-            if (wait)
+            if (block)
                 task.Wait();
+
         }
+
+
     }
 }

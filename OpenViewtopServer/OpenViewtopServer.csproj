@@ -6,7 +6,7 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{E65E9FB8-7656-4333-A24B-FF9816805CE4}</ProjectGuid>
     <OutputType>WinExe</OutputType>
-    <RootNamespace>OpenViewtopServer</RootNamespace>
+    <RootNamespace>Gosub.OpenViewtopServer</RootNamespace>
     <AssemblyName>OpenViewtopServer</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
@@ -69,6 +69,12 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="App.cs" />
+    <Compile Include="FormDesktopWatcher.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDesktopWatcher.Designer.cs">
+      <DependentUpon>FormDesktopWatcher.cs</DependentUpon>
+    </Compile>
     <Compile Include="FormServer.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -89,10 +95,14 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ProcessManager.cs" />
     <Compile Include="Settings.cs" />
     <Compile Include="ViewtopService.cs">
       <SubType>Component</SubType>
     </Compile>
+    <EmbeddedResource Include="FormDesktopWatcher.resx">
+      <DependentUpon>FormDesktopWatcher.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="FormServer.resx">
       <DependentUpon>FormServer.cs</DependentUpon>
     </EmbeddedResource>

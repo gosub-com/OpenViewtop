@@ -6,6 +6,15 @@ using Gosub.Http;
 
 namespace Gosub.Viewtop
 {
+    public enum WtsProcessType
+    {
+        System = 1,
+        User = 2,
+        UserFallbackToSystem = 3,
+        Admin = 4,
+        UIAccess = 8
+    }
+
     public class WtsProcess : IDisposable
     {
         IntPtr mProcess;
@@ -55,9 +64,9 @@ namespace Gosub.Viewtop
             }
         }
 
-        public unsafe static WtsProcess StartAsUser(
+        public unsafe static WtsProcess StartInSession(
             int sessionId,
-            bool runAsSystem,
+            WtsProcessType type,
             string filename,
             string args = "",
             string desktop = "Default")
@@ -67,17 +76,43 @@ namespace Gosub.Viewtop
 
             var winStation = "winsta0\\" + desktop;
 
+            if (!type.HasFlag(WtsProcessType.User) && !type.HasFlag(WtsProcessType.System))
+                throw new InvalidOperationException("System, User, or UserFallbackToSystem must be specified");
+
+            // Create program for user process
             IntPtr tokenHandle = IntPtr.Zero;
-            if (runAsSystem)
+            if (type.HasFlag(WtsProcessType.User))
+            {
+                if (WTSQueryUserToken(sessionId, ref tokenHandle))
+                {
+                    // Get the admin handle
+                    if (type.HasFlag(WtsProcessType.Admin))
+                    {
+                        IntPtr adminToken = IntPtr.Zero;
+                        if (GetTokenInformation(tokenHandle, TOKEN_INFORMATION_CLASS.TokenLinkedToken,
+                                                ref adminToken, sizeof(IntPtr), out int returnLength)
+                                && adminToken != IntPtr.Zero && returnLength == sizeof(IntPtr))
+                        {
+                            CloseHandle(tokenHandle);
+                            tokenHandle = adminToken;
+                        }
+                        else
+                        {
+                            Log.Write("Error getting admin token: " + Marshal.GetLastWin32Error());
+                        }
+                    }
+                }
+                else
+                {
+                    if (!type.HasFlag(WtsProcessType.System))
+                        throw new Win32Exception("WTSQueryUserToken: " + Marshal.GetLastWin32Error());
+                }
+            }
+
+            if (tokenHandle == IntPtr.Zero)
             {
                 if (!OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE, ref tokenHandle))
                     throw new Win32Exception("OpenProcessToken: " + Marshal.GetLastWin32Error());
-            }
-            else
-            {
-                // NOTE: We could convert this to admin token using GetTokenInformation with TokenLinkedToken
-                if (!WTSQueryUserToken(sessionId, ref tokenHandle))
-                    throw new Win32Exception("WTSQueryUserToken: " + Marshal.GetLastWin32Error());
             }
 
             // Duplicate the handle so it can be modified
@@ -95,17 +130,15 @@ namespace Gosub.Viewtop
             }
             CloseHandle(tokenHandle);
 
-            IntPtr environment = IntPtr.Zero;
-            if (runAsSystem)
+            // Run the process in the correct session
+            if (!SetTokenInformation(dupedToken, TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(int)))
             {
-                // Run the process in the correct session
-                if (!SetTokenInformation(dupedToken, TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(int)))
-                {
-                    CloseHandle(dupedToken);
-                    throw new Win32Exception("SetTokenInformation TokenSessionId: " + Marshal.GetLastWin32Error());
-                }
-
-                // Allow access to login screen, task manager, and other protected screens
+                CloseHandle(dupedToken);
+                throw new Win32Exception("SetTokenInformation TokenSessionId: " + Marshal.GetLastWin32Error());
+            }
+            // Allow access to login screen, task manager, and other protected screens
+            if (type.HasFlag(WtsProcessType.UIAccess))
+            {
                 int uiAccess = 1;
                 if (!SetTokenInformation(dupedToken, TOKEN_INFORMATION_CLASS.TokenUIAccess, ref uiAccess, sizeof(int)))
                 {
@@ -113,12 +146,12 @@ namespace Gosub.Viewtop
                     throw new Win32Exception("SetTokenInformation TokenUIAccess: " + Marshal.GetLastWin32Error());
                 }
             }
-            else
-            {
-                // Get the environment block when running as a user
+
+            // Get the environment block when running as a user
+            IntPtr environment = IntPtr.Zero;
+            if (type.HasFlag(WtsProcessType.User))
                 if (!CreateEnvironmentBlock(ref environment, dupedToken, false))
                     Log.Write("CreateEnvironmentBlock: " + Marshal.GetLastWin32Error());
-            }
 
             var pi = new PROCESS_INFORMATION();
             var si = new STARTUPINFO();

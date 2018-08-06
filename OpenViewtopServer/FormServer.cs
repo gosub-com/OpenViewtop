@@ -29,9 +29,6 @@ namespace Gosub.OpenViewtopServer
         const int PURGE_PEER_LOST_CONNECTION_MS = 10000;
         const int PROBLEM_PEER_TIME_MS = 3000;
 
-        public string ControlPipe { get; set; } = "";
-        public Mutex ShowOnTopMutex;
-
         bool mDebug { get; set; } = Debugger.IsAttached;
         bool mShowOnTopMutexLastState;
 
@@ -45,7 +42,7 @@ namespace Gosub.OpenViewtopServer
         Point mLocation;
         Size mSize;
         bool mExiting;
-        NamedPipeClientStream mNamedPipe;
+        ProcessManager mProcessManager;
 
         int mHttpPort;
         int mHttpsPort;
@@ -111,10 +108,39 @@ namespace Gosub.OpenViewtopServer
             }
             timerRunSystem.Interval = 10;
             timerRunSystem.Enabled = true;
-            timerUpdateBeacon.Enabled = true;
-            Task.Run(() => ExecuteNamedPipeCommand());
+
+            // Close process when requested by the server
+            if (Program.ParamControlPipe != "")
+            {
+                Log.Write("Starting pipe...");
+                mProcessManager = new ProcessManager(Program.ParamControlPipe, false);
+                ProcessServerCommands();
+                Log.Write("Pipe connected");
+            }
+
             Location = mLocation;
             Size = mSize;
+        }
+
+        async void ProcessServerCommands()
+        {
+            try
+            {
+                await mProcessManager.SendCommandAsync(ProcessManager.COMMAND_CONNECTED);
+                while (!mExiting)
+                {
+                    var command = await mProcessManager.ReadCommandAsync();
+                    if (command == ProcessManager.COMMAND_CLOSE)
+                    {
+                        await mProcessManager.SendCommandAsync(ProcessManager.COMMAND_CLOSING);
+                        ApplicationExit();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("ProcessServerCommands", ex);
+            }
         }
 
         private void FormMain_FormClosing(object sender, FormClosingEventArgs e)
@@ -136,7 +162,7 @@ namespace Gosub.OpenViewtopServer
             try { mHttpServer.Stop(); } catch { }
             try { mBeacon.Stop(); } catch { }
             try { Settings.Save(mSettings); } catch { }
-            try { mNamedPipe.Close(); } catch { }
+            try { mProcessManager.Close(); } catch { }
             Application.Exit();
         }
 
@@ -151,59 +177,7 @@ namespace Gosub.OpenViewtopServer
             BringToFront();
             TopMost = false;
         }
-
-        // Use pipe to exit process gracefully, rather than killing from service
-        async void ExecuteNamedPipeCommand()
-        {
-            if (ControlPipe == "")
-                return;
-
-            Log.Write("Named pipe: " + ControlPipe);
-            try
-            {
-                var np = new NamedPipeClientStream(".", ControlPipe, PipeDirection.InOut, PipeOptions.Asynchronous);
-                mNamedPipe = np;
-                await Task.Run(() => { np.Connect(); });
-                Log.Write("Named pipe connected");
-                ExitWhenDesktopChanges(np);
-                var control = new StreamReader(np);
-                while (!mExiting)
-                {
-                    var message = await control.ReadLineAsync();
-                    if (message == "close")
-                        ApplicationExit();
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Write("Named pipe exception", ex);
-            }
-        }
-
-        /// <summary>
-        /// Monitor desktop, and exit if it changes
-        /// </summary>
-        async void ExitWhenDesktopChanges(NamedPipeClientStream np)
-        {
-            if (Program.ParamDesktop == "")
-                return;
-
-            while (!mExiting)
-            {
-                await Task.Delay(50);
-                var desktop = Wts.GetDesktopName();
-                if (desktop.ToLower() != Program.ParamDesktop.ToLower())
-                {
-                    var control = new StreamWriter(np);
-                    await control.WriteLineAsync(desktop);
-                    await control.FlushAsync();
-                    np.Close();
-                    ApplicationExit();
-                    return;
-                }
-            }
-        }
-
+        
         private void CheckAppDataDirectory()
         {
             try
@@ -345,21 +319,17 @@ namespace Gosub.OpenViewtopServer
         /// </summary>
         void ProcessStartAsLoggedOnUser(string fileName)
         {
-            if (Debugger.IsAttached)
-            {
-                Process.Start(fileName);
-                return;
-            }
-           
             try
             {
                 // Launch from helper task running as the user, also with the user environment
-                WtsProcess.StartAsUser(Wts.GetActiveConsoleSessionId(), false,
+                // NOTE: This fails unless it's running in the system accont
+                WtsProcess.StartInSession(Wts.GetActiveConsoleSessionId(), WtsProcessType.User,
                     Application.ExecutablePath, Program.PARAM_START_BROWSER +  " \"" + fileName + "\"").Dispose();
             }
-            catch (Exception ex)
+            catch
             {
-                MessageBox.Show(this, "Error launching browser: " + ex.Message, App.Name);
+                // NOTE: New versions run in as the logged on user and the above code fails.
+                Process.Start(fileName);
             }
         }
 
@@ -368,6 +338,7 @@ namespace Gosub.OpenViewtopServer
             if (mHttpServer != null)
                 return;
 
+            Log.Write("Starting web server");
             labelSecureLink.Text = "Starting...";
             Refresh();
             string machineName = "";
@@ -410,6 +381,7 @@ namespace Gosub.OpenViewtopServer
                 throw;
             }
 
+            Log.Write("Web server running");
             string link = "https://" + machineName + ":" + mHttpsPort;
             string text = "";
             labelSecureLink.Text = text + link;
@@ -550,31 +522,9 @@ namespace Gosub.OpenViewtopServer
             RefreshPeerGrid();
         }
 
-        private void timerUpdateBeacon_Tick(object sender, EventArgs e)
+        // The tray icon doesn't show if the user account is still booting.  Poke it a few times
+        private void timerTrayIcon_Tick(object sender, EventArgs e)
         {
-            if (ShowOnTopMutex != null)
-            {
-                // Show this form on the rising edge of not being able to get
-                // the mutex, which means another instance (see Program.cs)
-                // is signalling this server to show itself.
-                var showOnTopMutexState = ShowOnTopMutex.WaitOne(0);
-                if (showOnTopMutexState)
-                    ShowOnTopMutex.ReleaseMutex();
-                if (!showOnTopMutexState && mShowOnTopMutexLastState)
-                    ShowOnTop();
-                mShowOnTopMutexLastState = showOnTopMutexState;
-            }
-
-            if (mBeacon != null)
-                mBeacon.Update();
-        }
-
-
-        private void timerRunSystem_Tick(object sender, EventArgs e)
-        {
-            timerRunSystem.Interval = 1000;
-
-            // The tray icon doesn't show if the user account is still booting
             if (mTrayIconRetryCount <= TRAY_ICON_RETRIES)
             {
                 mTrayIconRetryCount++;
@@ -584,6 +534,12 @@ namespace Gosub.OpenViewtopServer
                     notifyIcon.Visible = true;
                 }
             }
+        }
+
+
+        private void timerRunSystem_Tick(object sender, EventArgs e)
+        {
+            timerRunSystem.Interval = 100;
 
             // Retry starting the servers until it works
             try
@@ -595,6 +551,27 @@ namespace Gosub.OpenViewtopServer
             {
                 Log.Write("Error starting server", ex);
             }
+
+            if (mBeacon != null)
+                mBeacon.Update();
+
+            // Show this form on the rising edge of not being able to get
+            // the mutex, which means another instance (see Program.cs)
+            // is signalling this server to show itself.
+            var showOnTopMutex = Program.ShowOnTopMutex;
+            if (showOnTopMutex != null)
+            {
+                var showOnTopMutexState = showOnTopMutex.WaitOne(0);
+                if (showOnTopMutexState)
+                    showOnTopMutex.ReleaseMutex();
+                if (!showOnTopMutexState && mShowOnTopMutexLastState)
+                    ShowOnTop();
+                mShowOnTopMutexLastState = showOnTopMutexState;
+            }
+        }
+
+        private void timerUpdateGui_Tick(object sender, EventArgs e)
+        {
             if (mBeacon == null || mHttpServer == null)
                 return;
 
@@ -614,6 +591,7 @@ namespace Gosub.OpenViewtopServer
             mOvtServer.LocalComputerInfo.LocalIp = ipAddressList.Count == 0 ? "" : ipAddressList[0];
             mOvtServer.LocalComputerInfo.LocalIps = ipAddressList.ToArray();
         }
+
 
         private void RefreshPeerGrid()
         {

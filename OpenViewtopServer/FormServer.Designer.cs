@@ -46,12 +46,13 @@ namespace Gosub.OpenViewtopServer
             this.buttonRefreshRemoteComputers = new System.Windows.Forms.Button();
             this.labelPublicIpAddress = new System.Windows.Forms.Label();
             this.notifyIcon = new System.Windows.Forms.NotifyIcon(this.components);
-            this.timerUpdateBeacon = new System.Windows.Forms.Timer(this.components);
             this.gridRemote = new Gosub.Viewtop.GridWithoutAutoSelect();
             this.columnName = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnComputer = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnIp = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.columnStatus = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.timerTrayIcon = new System.Windows.Forms.Timer(this.components);
+            this.timerUpdateGui = new System.Windows.Forms.Timer(this.components);
             this.groupBox2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.gridRemote)).BeginInit();
             this.SuspendLayout();
@@ -199,10 +200,6 @@ namespace Gosub.OpenViewtopServer
             this.notifyIcon.Visible = true;
             this.notifyIcon.Click += new System.EventHandler(this.notifyIcon_Click);
             // 
-            // timerUpdateBeacon
-            // 
-            this.timerUpdateBeacon.Tick += new System.EventHandler(this.timerUpdateBeacon_Tick);
-            // 
             // gridRemote
             // 
             this.gridRemote.AllowUserToAddRows = false;
@@ -249,7 +246,19 @@ namespace Gosub.OpenViewtopServer
             this.columnStatus.Name = "columnStatus";
             this.columnStatus.Width = 80;
             // 
-            // FormMain
+            // timerTrayIcon
+            // 
+            this.timerTrayIcon.Enabled = true;
+            this.timerTrayIcon.Interval = 1000;
+            this.timerTrayIcon.Tick += new System.EventHandler(this.timerTrayIcon_Tick);
+            // 
+            // timerUpdateGui
+            // 
+            this.timerUpdateGui.Enabled = true;
+            this.timerUpdateGui.Interval = 1000;
+            this.timerUpdateGui.Tick += new System.EventHandler(this.timerUpdateGui_Tick);
+            // 
+            // FormServer
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
@@ -266,7 +275,7 @@ namespace Gosub.OpenViewtopServer
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.MaximizeBox = false;
             this.MinimizeBox = false;
-            this.Name = "FormMain";
+            this.Name = "FormServer";
             this.Text = "Open Viewtop";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormMain_FormClosing);
             this.Load += new System.EventHandler(this.FormMain_Load);
@@ -298,7 +307,8 @@ namespace Gosub.OpenViewtopServer
         private System.Windows.Forms.DataGridViewTextBoxColumn columnIp;
         private System.Windows.Forms.DataGridViewTextBoxColumn columnStatus;
         private System.Windows.Forms.NotifyIcon notifyIcon;
-        private System.Windows.Forms.Timer timerUpdateBeacon;
+        private System.Windows.Forms.Timer timerTrayIcon;
+        private System.Windows.Forms.Timer timerUpdateGui;
     }
 }
 
