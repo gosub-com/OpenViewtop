@@ -171,7 +171,7 @@ namespace Gosub.Viewtop
             challenge.Event = "Challenge";
             challenge.Sid = Util.GenerateRandomId();
             challenge.Challenge = Util.GenerateSalt();
-            var user = UserFile.Load().Find(login.Username);
+            var user = UserFile.Load().Find(login.Username == null ? "" : login.Username);
             challenge.Salt = user != null ? user.Salt : Util.GenerateSalt();
             await WriteJson(websocket, challenge);
 

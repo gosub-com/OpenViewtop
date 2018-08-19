@@ -7,7 +7,8 @@ using System.IO;
 using System.IO.Pipes;
 using Gosub.Viewtop;
 using Gosub.Http;
-
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace Gosub.OpenViewtopServer
 {
@@ -30,9 +31,9 @@ namespace Gosub.OpenViewtopServer
         StreamWriter mPipeWriter;
         StreamReader mPipeReader;
 
-        public const string COMMAND_CONNECTED = "$connected"; // Sent by remote process when connected
-        public const string COMMAND_CLOSE = "$close"; // Request remote application to close
-        public const string COMMAND_CLOSING = "$closing"; // Remote application says it's closing
+        public const string COMMAND_CONNECTED = "$connected$"; // Sent by remote process when connected
+        public const string COMMAND_CLOSE = "$close$"; // Request remote application to close
+        public const string COMMAND_CLOSING = "$closing$"; // Remote application says it's closing
 
         public string PipeName => mPipeName;
         public bool IsConnected => mServerPipe != null && mServerPipe.IsConnected;
@@ -47,7 +48,9 @@ namespace Gosub.OpenViewtopServer
                 mPipeName = pipeName;
                 if (server)
                 {
-                    mServerPipe = new NamedPipeServerStream(mPipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    var pipeSecurity = new PipeSecurity();
+                    pipeSecurity.SetAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+                    mServerPipe = new NamedPipeServerStream(mPipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 8192, 8192, pipeSecurity);
                     mPipe = mServerPipe;
                 }
                 else

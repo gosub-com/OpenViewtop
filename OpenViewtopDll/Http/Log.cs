@@ -4,13 +4,14 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 namespace Gosub.Http
 {
 
     static public class Log
     {
-        static Queue<string> mLog = new Queue<string>();
+        static QueueList<string> mLog = new QueueList<string>();
 
         /// <summary>
         /// Default: Write to console when debugger is attached
@@ -54,15 +55,14 @@ namespace Gosub.Http
         {
             lock (mLog)
             {
-                var log = new string[Math.Min(maxLines, mLog.Count)];
-                int i = log.Length;
-                foreach (var entry in mLog)
+                StringBuilder sb = new StringBuilder();
+                for (int i = mLog.Count-1;  i >= 0;  i--)
                 {
-                    if (--i < 0)
-                        break;
-                    log[i] = entry;
+                    sb.Append(mLog[i]);
+                    if (i != 0)
+                        sb.Append("\r\n");
                 }
-                return string.Join("\r\n", log);
+                return sb.ToString();
             }
         }
 

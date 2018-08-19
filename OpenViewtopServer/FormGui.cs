@@ -39,8 +39,6 @@ namespace Gosub.OpenViewtopServer
         const int TRAY_ICON_RETRY_TIME = 5;
         int mTrayIconRetryCount;
 
-        Point mLocation;
-        Size mSize;
         bool mExiting;
         ProcessManager mProcessManager;
 
@@ -70,8 +68,10 @@ namespace Gosub.OpenViewtopServer
             InitializeComponent();
         }
 
-        private void FormGui_Load(object sender, EventArgs e)
+        private async void FormGui_Load(object sender, EventArgs e)
         {
+            var closeTask = Task.Run(async () => await ProcessServerCommands());
+
             Text = App.Name + ", version " + App.Version + (mDebug ? " - DEBUG" : "");
             labelSecureLink.Text = "Starting...";
             labelUnsecureLink.Text = "";
@@ -81,12 +81,8 @@ namespace Gosub.OpenViewtopServer
             mHttpPort = mDebug ? HTTP_PORT_DEBUG : HTTP_PORT;
             mHttpsPort = mDebug ? HTTPS_PORT_DEBUG : HTTPS_PORT;
 
-            // Do not flash the form when it is first displayed
-            mLocation = Location;
-            mSize = Size;
-            StartPosition = FormStartPosition.Manual;
-            Location = new Point(-10000, -10000);
-            Size = new Size();
+            if (await closeTask)
+                ApplicationExit("@reason=Closed by service");
         }
 
 
@@ -94,8 +90,13 @@ namespace Gosub.OpenViewtopServer
         {
             try
             {
-                if (!mDebug)
-                    Hide();
+                // Hide form to start, the setup to show.  This is needed to prevent flickering.
+                Hide();
+                Opacity = 1;
+                FormBorderStyle = FormBorderStyle.Fixed3D;
+                if (mDebug)
+                    Show();
+
                 CheckAppDataDirectory();
                 mSettings = Settings.Load();
                 textName.Text = mSettings.Name;
@@ -108,32 +109,29 @@ namespace Gosub.OpenViewtopServer
             }
             timerRunSystem.Interval = 10;
             timerRunSystem.Enabled = true;
+        }
 
-            // Close process when requested by the server
-            if (Program.ParamControlPipe != "")
+        /// <summary>
+        /// Process server commands.  Returns TRUE if the application should exit.
+        /// </summary>
+        async Task<bool> ProcessServerCommands()
+        {
+            if (Program.ParamControlPipe == "")
+                return false;
+
+            try
             {
                 Log.Write("Starting pipe...");
                 mProcessManager = new ProcessManager(Program.ParamControlPipe, false);
-                ProcessServerCommands();
                 Log.Write("Pipe connected");
-            }
-
-            Location = mLocation;
-            Size = mSize;
-        }
-
-        async void ProcessServerCommands()
-        {
-            try
-            {
                 await mProcessManager.SendCommandAsync(ProcessManager.COMMAND_CONNECTED);
                 while (!mExiting)
                 {
                     var command = await mProcessManager.ReadCommandAsync();
-                    if (command == ProcessManager.COMMAND_CLOSE)
+                    if (command.StartsWith(ProcessManager.COMMAND_CLOSE))
                     {
-                        await mProcessManager.SendCommandAsync(ProcessManager.COMMAND_CLOSING);
-                        ApplicationExit();
+                        await mProcessManager.SendCommandAsync(ProcessManager.COMMAND_CLOSING + "@reason=Closed by service");
+                        return true;
                     }
                 }
             }
@@ -141,6 +139,7 @@ namespace Gosub.OpenViewtopServer
             {
                 Log.Write("ProcessServerCommands", ex);
             }
+            return false;
         }
 
         private void FormGui_FormClosing(object sender, FormClosingEventArgs e)
@@ -151,10 +150,10 @@ namespace Gosub.OpenViewtopServer
                 e.Cancel = true;
                 return;
             }
-            ApplicationExit();
+            ApplicationExit("@reason=" + e.CloseReason);
         }
 
-        void ApplicationExit()
+        void ApplicationExit(string reason)
         {
             if (mExiting)
                 return;
@@ -162,6 +161,10 @@ namespace Gosub.OpenViewtopServer
             try { mHttpServer.Stop(); } catch { }
             try { mBeacon.Stop(); } catch { }
             try { Settings.Save(mSettings); } catch { }
+
+            // Try sending the message, even though the pipe could
+            // be closed, transmitting, or not even open yet
+            try { mProcessManager.SendCommandAsync(ProcessManager.COMMAND_CLOSING+reason).Wait(100); } catch { }
             try { mProcessManager.Close(); } catch { }
             Application.Exit();
         }

@@ -241,7 +241,7 @@ button::-moz-focus-inner
         mRemoteLoginPage.style.display = "none";
         mRemoteConnectedPage.style.display = "block";
 
-        mViewer = new Viewtop(mRemoteCanvas);
+        mViewer = new Viewtop();
         mViewer.ErrorCallback = function(errorMessage)
         {
             Logout();
@@ -254,9 +254,9 @@ button::-moz-focus-inner
             app.FrameStats = mViewer.FrameStats;
         }
 
-        mViewer.ClipboardButton = document.getElementById('clipboardId');
+        mViewer.SetClipboardButton(document.getElementById('clipboardId'));
         UpdateOptions();
-        mViewer.Start(mUsername.value, mPassword.value);
+        mViewer.Start(mRemoteCanvas, mUsername.value, mPassword.value);
     }
 
     function Logout()
@@ -267,7 +267,7 @@ button::-moz-focus-inner
         mRemoteLoginPage.style.display = "block";
         mRemoteConnectedPage.style.display = "none";
         mErrorMessage.style.display = "none";
-        mUsername.focus();
+        try { mUsername.focus(); } catch { } // TBD: Should work
     }
 
     function FullScreen()
@@ -296,7 +296,7 @@ button::-moz-focus-inner
         if (app.RadioOutput != "")
             options += "output=" + app.RadioOutput + "&";
 
-        mViewer.DrawOptions = options;
+        mViewer.SetDrawOptions(options);
         console.log("Options=" + options);
     }
 

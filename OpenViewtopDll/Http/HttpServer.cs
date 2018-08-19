@@ -146,8 +146,17 @@ namespace Gosub.Http
 
                 // Read header
                 reader.ReadTimeout = HeaderTimeout;
-                if (!await context.ReadHttpHeaderAsyncInternal().ConfigureAwait(false))
-                    return; // Connection closed
+
+                try
+                {
+                    if (!await context.ReadHttpHeaderAsyncInternal().ConfigureAwait(false))
+                        return; // Connection closed
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("HTTP header exception: " + ex.GetType() + " - " + ex.Message);
+                    return; // Close connection
+                }
 
                 // Handle body
                 reader.ReadTimeout = HeaderTimeout;

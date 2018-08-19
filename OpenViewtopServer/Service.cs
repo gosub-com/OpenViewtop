@@ -17,6 +17,7 @@ namespace Gosub.OpenViewtopServer
     {
         const int HTTP_PORT = 8157;
         const int PROCESS_TERMINATE_TIMEOUT_MS = 1000;
+        const int POLL_PROCESSES_MS = 331;
 
         bool mRunning;
         Timer mSessionChangedTimer;
@@ -24,13 +25,14 @@ namespace Gosub.OpenViewtopServer
 
         ProcessManager mGuiMan;
         WtsProcess mGuiProcess;
+        string mDesktopGuiIsOn = "";
+
         ProcessManager mDesktopMan;
         WtsProcess mDesktopProcess;
+        string mDesktopFromWatcher = "";
 
 
         const string DEFAULT_DESKTOP = "Default";
-        string mDesktop = DEFAULT_DESKTOP;
-        string mGuiLaunchDesktop = "";
         int mSessionId;
         string mDomainName = "";
         string mUserName = "";
@@ -50,7 +52,7 @@ namespace Gosub.OpenViewtopServer
                     return;
                 Log.Write("OnStart");
                 mRunning = true;
-                mSessionChangedTimer = new Timer((obj) => { CheckServiceRunning(); }, null, 0, 120);
+                mSessionChangedTimer = new Timer((obj) => { CheckServiceRunning(); }, null, 0, POLL_PROCESSES_MS);
             }
         }
 
@@ -72,6 +74,8 @@ namespace Gosub.OpenViewtopServer
 
                 TerminateProcess(ref mGuiProcess, ref mGuiMan, true);
                 TerminateProcess(ref mDesktopProcess, ref mDesktopMan, true);
+                mDesktopFromWatcher = "";
+                mDesktopGuiIsOn = "";
             }
         }
 
@@ -126,18 +130,21 @@ namespace Gosub.OpenViewtopServer
                 {
                     Log.Write("GUI process has stopped for unknown reason.");
                     TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
+                    mDesktopGuiIsOn = "";
                 }
                 // Check for DESKTOP process stopped
                 if (mDesktopProcess != null && !mDesktopProcess.IsRunning)
                 {
                     Log.Write("DESKTOP process has stopped for unknown reason.");
                     TerminateProcess(ref mDesktopProcess, ref mDesktopMan, false);
+                    mDesktopFromWatcher = "";
                 }
                 // Check for desktop changed
-                if (mDesktop != mGuiLaunchDesktop && mGuiProcess != null)
+                if (mGuiProcess != null && mDesktopFromWatcher != mDesktopGuiIsOn && mDesktopFromWatcher != "")
                 {
-                    Log.Write("Stopping GUI process because desktop changed from '" + mGuiLaunchDesktop + "' to '" + mDesktop);
+                    Log.Write("Stopping GUI process because desktop changed from '" + mDesktopGuiIsOn + "' to '" + mDesktopFromWatcher);
                     TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
+                    mDesktopGuiIsOn = "";
                 }
                 // Check for session changed
                 var sessionId = Wts.GetActiveConsoleSessionId();
@@ -153,13 +160,15 @@ namespace Gosub.OpenViewtopServer
                         Log.Write("Stopping GUI and DESKTOP processes because id or user changed, id=" + sessionId + ", user=" + Wts.GetSessionUserName(sessionId));
                     TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
                     TerminateProcess(ref mDesktopProcess, ref mDesktopMan, false);
+                    mDesktopFromWatcher = "";
+                    mDesktopGuiIsOn = "";
 
                     if (sessionId < 0)
                         Log.Write("*** No active session, not starting GUI or DESKTOP processes ***");
                 }
 
                 // Ensure processes are running
-                if (mGuiProcess == null && sessionId >= 0)
+                if (mGuiProcess == null && sessionId >= 0 && mDesktopFromWatcher != "")
                     StartGuiProcess(sessionId);
                 if (mDesktopProcess == null && sessionId >= 0)
                     StartDesktopWatcherProcess(sessionId);
@@ -174,10 +183,10 @@ namespace Gosub.OpenViewtopServer
         void StartGuiProcess(int sessionId)
         {
             TerminateProcess(ref mGuiProcess, ref mGuiMan, false);
+            mDesktopGuiIsOn = "";
 
-
-            var desktop = mDesktop;
-            mGuiLaunchDesktop = desktop;
+            var desktop = mDesktopFromWatcher;
+            mDesktopGuiIsOn = desktop;
             var pipeName = "OpenViewtop_gui_" + Util.GenerateRandomId();
 
             // When on the default desktop, run as the user so the clipboard works properly.
@@ -188,10 +197,10 @@ namespace Gosub.OpenViewtopServer
             processType |= WtsProcessType.Admin | WtsProcessType.UIAccess;
 
             // Mange process communications
+            Log.Write("*** Starting GUI: Session=" + sessionId + ", User=" + mUserName + ", Desktop=" + desktop + ", Pipe=" + pipeName);
             mGuiMan = new ProcessManager(pipeName, true);
             Task.Run(() => { ProcessRemoteCommunications(mGuiMan, "GUI"); });
 
-            Log.Write("*** Starting GUI: Session=" + sessionId + ", User=" + mUserName + ", Desktop=" + desktop + ", Pipe=" + pipeName);
             mGuiProcess = WtsProcess.StartInSession(
                 sessionId, processType,
                 System.Windows.Forms.Application.ExecutablePath,
@@ -202,16 +211,16 @@ namespace Gosub.OpenViewtopServer
         void StartDesktopWatcherProcess(int sessionId)
         {
             TerminateProcess(ref mDesktopProcess, ref mDesktopMan, false);
+            mDesktopFromWatcher = "";
 
             // Create new process
-            mDesktop = DEFAULT_DESKTOP; // If anything goes wrong, just use the default desktop
             var pipeName = "OpenViewtop_desktop_" + Util.GenerateRandomId();
 
             // Manage communications
+            Log.Write("*** Starting DESKTOP: Session=" + sessionId + ", User=" + mUserName + ", Pipe=" + pipeName);
             mDesktopMan = new ProcessManager(pipeName, true);
             Task.Run(() => { ProcessRemoteCommunications(mDesktopMan, "DESKTOP"); });
 
-            Log.Write("*** Starting DESKTOP: Session=" + sessionId + ", User=" + mUserName + ", Pipe=" + pipeName);
             mDesktopProcess = WtsProcess.StartInSession(
                 sessionId, WtsProcessType.System,
                 System.Windows.Forms.Application.ExecutablePath,
@@ -227,32 +236,33 @@ namespace Gosub.OpenViewtopServer
             {
                 await manager.WaitForConnection();
                 var command = "";
-                while (command != ProcessManager.COMMAND_CLOSING)
+                while (!command.StartsWith(ProcessManager.COMMAND_CLOSING))
                 {
                     command = await manager.ReadCommandAsync();
-                    if (command == ProcessManager.COMMAND_CONNECTED)
+                    if (command.StartsWith(ProcessManager.COMMAND_CONNECTED))
                         Log.Write(processName + " process connected on pipe " + manager.PipeName);
-                    else if (command == ProcessManager.COMMAND_CLOSING)
-                        Log.Write(processName + " process closing on pipe " + manager.PipeName);
                     else if (!command.StartsWith("$"))
                     {
                         // For now, all non-control commands are just the desktop name
-                        if (command != mDesktop)
+                        if (command != mDesktopFromWatcher)
                         {
                             Log.Write("Desktop changed to: " + command);
-                            mDesktop = command;
+                            mDesktopFromWatcher = command;
                             CheckServiceRunning();  // Restart GUI on new desktop
                         }
                     }
                 }
-            }
-            catch (ObjectDisposedException)
-            {
-                Log.Write(processName + " pipe closed by other thread or remote process: Pipe=" + manager.PipeName);
+                Log.Write(processName + " process closed itself on pipe " + manager.PipeName + ": " + command);
+
+                lock (mServiceLock)
+                {
+                    if (manager == mDesktopMan)
+                        mDesktopFromWatcher = ""; // Prevent launching new GUI until we get a valid desktop
+                }
             }
             catch (Exception ex)
             {
-                Log.Write(processName + " process exception: Pipe=" + manager.PipeName, ex);
+                Log.Write(processName + " process exception: Pipe=" + manager.PipeName + ", Exception=" + ex.GetType() + ", Message=" + ex.Message);
             }
             CheckServiceRunning();
         }

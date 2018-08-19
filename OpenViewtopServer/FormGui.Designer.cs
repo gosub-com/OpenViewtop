@@ -258,7 +258,7 @@ namespace Gosub.OpenViewtopServer
             this.timerUpdateGui.Interval = 1000;
             this.timerUpdateGui.Tick += new System.EventHandler(this.timerUpdateGui_Tick);
             // 
-            // FormServer
+            // FormGui
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
@@ -272,10 +272,13 @@ namespace Gosub.OpenViewtopServer
             this.Controls.Add(this.groupBox2);
             this.Controls.Add(this.labelUnsecureLink);
             this.Controls.Add(this.labelSecureLink);
+            this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.None;
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.MaximizeBox = false;
             this.MinimizeBox = false;
-            this.Name = "FormServer";
+            this.Name = "FormGui";
+            this.Opacity = 0D;
+            this.ShowInTaskbar = false;
             this.Text = "Open Viewtop";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.FormGui_FormClosing);
             this.Load += new System.EventHandler(this.FormGui_Load);

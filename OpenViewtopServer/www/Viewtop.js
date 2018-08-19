@@ -6,10 +6,132 @@
 
 // NOTE: Include "Sha256.js"
 
+function Viewtop()
+{
+    var THIS = this;
+
+    var mCanvas = null;
+    var mContext = null;
+    var mUsername = null
+    var mPassword = null;
+    var mViewtop = null;
+
+    var mDrawOptions = "";
+    var mClipboardButton = { };
+
+    var RETRY_TIMEOUT = 500;
+    var MAX_FAILS_IN_A_ROW = 3;
+    var mFailsInARow = 0;
+
+
+    this.Start = function (canvas, username, password)
+    {
+        mCanvas = canvas;
+        mContext = canvas.getContext('2d');
+        mUsername = username;
+        mPassword = password;
+
+        InitializeCanvas();
+        StartInternal();
+    }
+
+    this.Stop = function()
+    {
+        StopInternal();
+    }
+
+    this.SetDrawOptions = function(options)
+    {
+        mDrawOptions = options;
+        if (mViewtop != null)
+            mViewtop.DrawOptions = mDrawOptions;
+    }
+    this.SetClipboardButton = function (button)
+    {
+        mClipboardButton = button;
+        if (mViewtop != null)
+            mViewtop.ClipboardButton = mClipboardButton;
+    }
+
+    this.ErrorCallback = function (errorMessage) { }
+    this.GotFrameCallback = function () { }
+    this.FrameStats = {}
+
+    function StartInternal()
+    {
+        if (mViewtop != null)
+            mViewtop.Stop();
+
+        mViewtop = new ViewtopInternal(mCanvas);
+        mViewtop.DrawOptions = mDrawOptions;
+        mViewtop.ClipboardButton = mClipboardButton;
+        mViewtop.GotFrameCallback = function ()
+        {
+            THIS.FrameStats = mViewtop.FrameStats;
+            THIS.GotFrameCallback();
+            mFailsInARow = 0;
+        }
+        mViewtop.ErrorCallback = function (errorMessage)
+        {
+            console.log("ERROR: " + errorMessage);
+            if (mViewtop == null)
+                return;
+
+            if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
+            {
+                ShowMessage("ERROR: " + errorMessage);
+                StopInternal();
+                THIS.ErrorCallback(errorMessage);
+            }
+            else
+            {
+                ShowMessage("Loading...");
+                setTimeout(function ()
+                {
+                    StartInternal();
+                }, RETRY_TIMEOUT);
+            }
+        }
+        mViewtop.Start(mUsername, mPassword);
+    }
+
+    function StopInternal()
+    {
+        if (mViewtop == null)
+            return;
+        mViewtop.Stop();
+
+        mCanvas = null;
+        mContext = null;
+        mUsername = null;
+        mPassword = null;
+        mViewtop = null;
+    }
+
+    function InitializeCanvas()
+    {
+        mContext.fillStyle = '#228';
+        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
+        mContext.fillStyle = '#fff';
+        mContext.font = '60px sans-serif';
+        mContext.fillText('Starting...', 10, mCanvas.height / 2 - 15);
+    }
+
+    function ShowMessage(message)
+    {
+        mContext.fillStyle = '#000';
+        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
+        mContext.font = '26px sans-serif';
+        mContext.fillStyle = '#88F';
+        mContext.fillText(message, 15, 25);
+    }
+
+}
+
 //
 // Main remote viewer class, used to continuosly update the canvas.
 //
-function Viewtop(canvas)
+function ViewtopInternal(canvas)
 {
     var THIS = this;
     var EVENTS_LOOP_TIME_MS = 7;
@@ -43,10 +165,6 @@ function Viewtop(canvas)
     var mDrawSequence = 1;
     var mDrawQueue = {};
 
-    var RETRY_TIMEOUT = 500;
-    var MAX_FAILS_IN_A_ROW = 3;
-    var mFailsInARow = 0;
-
     // Set draw options (each separated by '&')
     this.DrawOptions = "";
 
@@ -55,7 +173,6 @@ function Viewtop(canvas)
     {
         mUsername = username;
         mPassword = password;
-        InitializeCanvas();
         StartSession();
 
         mCanvas.onmousemove = OnMouseMove;
@@ -76,12 +193,13 @@ function Viewtop(canvas)
 
     this.ErrorCallback = function(errorMessage) { }
     this.GotFrameCallback = function () { }
-
     this.ClipboardButton = {};
     this.FrameStats = {}
 
     function StopInternal()
     {
+        if (!mRunning)
+            return;
         mRunning = false;
         mCanvas.onmousemove = function () { };
         mCanvas.onmousedown = function () { };
@@ -95,6 +213,21 @@ function Viewtop(canvas)
         mWebSocket.onerror = function (e) { };
         mWebSocket.onclose = function (e) { };
         mWebSocket.onmessage = function (e) { };
+
+        THIS.ErrorCallback = function (errorMessage) { }
+        THIS.GotFrameCallback = function () { }
+        mCanvas = null;
+        mContext = null;
+        mWebSocket = null;
+        mUsername = null;
+        mPassword = null;
+    }
+
+    function StopAndPostError(errorMessage)
+    {
+        console.log("StopAndPostError: " + errorMessage);
+        THIS.ErrorCallback(errorMessage);
+        StopInternal();
     }
 
     // Called when the user clicks the canvas
@@ -191,31 +324,14 @@ function Viewtop(canvas)
         mWebSocket = new WebSocket(protocol + location.host + WS_URL, "viewtop");
         mWebSocket.onerror = function (event)
         {
-            console.log("WebSocket.onerror: mFailsInARow=" + mFailsInARow);
-            mRunning = false;
-            if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
-            {
-                ShowError("Web socket error");
-            }
-            else
-            {
-                ShowMessage("Loading...");
-                setTimeout(function () { StartSession(); }, RETRY_TIMEOUT);
-            }
+            console.log("WebSocket.onerror: " + event.message);
+            StopAndPostError("Web socket error: " + event.message);
         }
         mWebSocket.onclose = function (event)
         {
-            console.log("WebSocket.onclose: mFailsInARow=" + mFailsInARow);
-            mRunning = false;
-            if (mFailsInARow++ >= MAX_FAILS_IN_A_ROW)
-            {
-                ShowError(event.reason == "" ? "Closed by remote: " + event.code : event.reason);
-            }
-            else
-            {
-                ShowMessage("Loading...");
-                setTimeout(function () { StartSession(); }, RETRY_TIMEOUT);
-            }
+            var message = event.reason == "" ? "Closed by remote: " + event.code : event.reason;
+            console.log("WebSocket.onclose: " + message);
+            StopAndPostError(message);
         }
         mWebSocket.onopen = function (event)
         {
@@ -232,18 +348,19 @@ function Viewtop(canvas)
         {
             try
             {
+                if (!mRunning)
+                    return;
+
                 if (mMessageCount == 0)
                     console.log("mWebSocket.onmessage: Got first message");
                 mMessageCount++;
 
                 OnViewtopMessageWs(e);
-                mFailsInARow = 0;
             }
             catch (e)
             {
-                mRunning = false;
                 console.log("Websocket onmessage exception: " + e.message);
-                ShowError(e.stack);
+                StopAndPostError(e.stack);
             }
         }
     }
@@ -292,7 +409,7 @@ function Viewtop(canvas)
         }
         else if (m.Event == "Close")
         {
-            ShowError(m.Message);
+            StopAndPostError(m.Message);
         }
 
         if (m.Frames !== undefined)            
@@ -346,8 +463,7 @@ function Viewtop(canvas)
         }
         catch (e)
         {
-            mRunning = false;
-            ShowError(e.stack);
+            StopAndPostError(e.stack);
         }
         setTimeout(function () { EventsLoopWs(); }, EVENTS_LOOP_TIME_MS);
     }
@@ -404,7 +520,7 @@ function Viewtop(canvas)
             });
             image.onerror = function ()
             {
-                ShowError("Error decoding image");
+                StopAndPostError("Error decoding image");
             };
             image.src = frames[i].Image;
         }
@@ -509,40 +625,10 @@ function Viewtop(canvas)
             var moreInfo = "";
             try { moreInfo = ", " + JSON.parse(request.responseText).FAIL; }
             catch (e) { }
-            ShowError(errorMessage + moreInfo);
+            StopAndPostError(errorMessage + moreInfo);
             return false;
         }
         return true;
-    }
-
-    function InitializeCanvas()
-    {
-        mContext.fillStyle = '#228';
-        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
-        mContext.fillStyle = '#fff';
-        mContext.font = '60px sans-serif';
-        mContext.fillText('Starting...', 10, mCanvas.height / 2 - 15);
-    }
-
-    function ShowError(errorMessage)
-    {
-        console.log("ShowError: " + errorMessage);
-        mContext.fillStyle = '#000';
-        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
-        mContext.font = '26px sans-serif';
-        mContext.fillStyle = '#88F';
-        mContext.fillText('ERROR: ' + errorMessage, 15, 25);
-        StopInternal();
-        THIS.ErrorCallback(errorMessage);
-    }
-
-    function ShowMessage(message)
-    {
-        mContext.fillStyle = '#000';
-        mContext.fillRect(0, 0, mCanvas.width, mCanvas.height);
-        mContext.font = '26px sans-serif';
-        mContext.fillStyle = '#88F';
-        mContext.fillText(message, 15, 25);
     }
 
     // Draw an image using a draw string, which is a list of single character
