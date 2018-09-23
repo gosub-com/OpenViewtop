@@ -8,8 +8,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using System.IO.Pipes;
-using System.Threading;
+using System.Net.NetworkInformation;
 using System.Threading.Tasks;
 using Gosub.Http;
 using Gosub.Viewtop;
@@ -18,16 +17,28 @@ namespace Gosub.OpenViewtopServer
 {
     public partial class FormGui : Form
     {
-        const int HTTP_PORT = 8151;
-        const int HTTPS_PORT = 8152;
-        const int HTTP_PORT_DEBUG = 8153;
-        const int HTTPS_PORT_DEBUG = 8154;
+        const int PORT_FORWARD_TO_HTTPS = 8151;
+        const int PORT_HTTPS = 8152;
+        const int PORT_HTTP = 8153;
+
+        const int PORT_FORWARD_TO_HTTPS_DEBUG = 8161;
+        const int PORT_HTTPS_DEBUG = 8162;
+        const int PORT_HTTP_DEBUG = 8163;
 
         const string BROADCAST_HEADER = "OVT:";
 
         const int PURGE_PEER_AFTER_EXIT_MS = 6000;
         const int PURGE_PEER_LOST_CONNECTION_MS = 10000;
         const int PROBLEM_PEER_TIME_MS = 3000;
+
+        // gridRemote columns
+        const int GR_COL_NAME = 0;
+        const int GR_COL_COMPUTER = 1;
+        const int GR_COL_IP = 2;
+        const int GR_COL_HTTP_PORT = 3;
+        const int GR_COL_HTTPS_PORT = 4;
+        const int GR_COL_STATUS = 5;
+        const int GR_COL_COUNT = 6;
 
         bool mDebug { get; set; } = Debugger.IsAttached;
         bool mShowOnTopMutexLastState;
@@ -42,8 +53,9 @@ namespace Gosub.OpenViewtopServer
         bool mExiting;
         ProcessManager mProcessManager;
 
-        int mHttpPort;
-        int mHttpsPort;
+        int mPortForwardToHttps;
+        int mPortHttp;
+        int mPortHttps;
         HttpServer mHttpServer;
 
         ViewtopServer mOvtServer = new ViewtopServer();
@@ -73,13 +85,20 @@ namespace Gosub.OpenViewtopServer
             var closeTask = Task.Run(async () => await ProcessServerCommands());
 
             Text = App.Name + ", version " + App.Version + (mDebug ? " - DEBUG" : "");
-            labelSecureLink.Text = "Starting...";
-            labelUnsecureLink.Text = "";
-            notifyIcon.Icon = Icon;
+            labelHttpsLink.Text = "Starting...";
+            labelHttpLink.Text = "";
             MouseAndKeyboard.GuiThreadControl = this;
             Clip.GuiThreadControl = this;
-            mHttpPort = mDebug ? HTTP_PORT_DEBUG : HTTP_PORT;
-            mHttpsPort = mDebug ? HTTPS_PORT_DEBUG : HTTPS_PORT;
+            mPortForwardToHttps = mDebug ? PORT_FORWARD_TO_HTTPS_DEBUG : PORT_FORWARD_TO_HTTPS;
+            mPortHttps = mDebug ? PORT_HTTPS_DEBUG : PORT_HTTPS;
+            mPortHttp = mDebug ? PORT_HTTP_DEBUG : PORT_HTTP;
+            if (mDebug)
+            {
+                Icon = Properties.Resources.OpenViewtopDebug;
+                ShowInTaskbar = true;
+            }
+            notifyIcon.Icon = Icon;
+            tabMain.BackColor = Color.Blue;
 
             if (await closeTask)
                 ApplicationExit("@reason=Closed by service");
@@ -99,7 +118,8 @@ namespace Gosub.OpenViewtopServer
 
                 CheckAppDataDirectory();
                 mSettings = Settings.Load();
-                textName.Text = mSettings.Name;
+                textNickname.Text = mSettings.Nickname;
+                checkBroadcast.Checked = mSettings.EnableBeaconBroadcast;
                 LoadUserFileFirstTime();
             }
             catch (Exception ex)
@@ -109,6 +129,9 @@ namespace Gosub.OpenViewtopServer
             }
             timerRunSystem.Interval = 10;
             timerRunSystem.Enabled = true;
+
+            NetworkChange.NetworkAddressChanged += (p1, p2) => { GetPublicIpAddress(); };
+            GetPublicIpAddress();
         }
 
         /// <summary>
@@ -160,7 +183,6 @@ namespace Gosub.OpenViewtopServer
             mExiting = true;
             try { mHttpServer.Stop(); } catch { }
             try { mBeacon.Stop(); } catch { }
-            try { Settings.Save(mSettings); } catch { }
 
             // Try sending the message, even though the pipe could
             // be closed, transmitting, or not even open yet
@@ -207,6 +229,7 @@ namespace Gosub.OpenViewtopServer
             // Ask to create a new user if there are none
             if (userFile.Users.Count == 0)
             {
+                Show();
                 CreateNewUser(userFile, "You must create a user name and password:");
                 SaveUserFile(userFile);
                 if (userFile.Users.Count == 0)
@@ -223,10 +246,11 @@ namespace Gosub.OpenViewtopServer
             try
             {
                 mPeerInfo.ComputerName = Dns.GetHostName();
-                mPeerInfo.Name = textName.Text + (mDebug ? " - DEBUG" : "");
-                mPeerInfo.HttpsPort = mHttpsPort.ToString();
-                mPeerInfo.HttpPort = mHttpPort.ToString();
+                mPeerInfo.Name = textNickname.Text + (mDebug ? " - DEBUG" : "");
+                mPeerInfo.HttpsPort = mPortHttps.ToString();
+                mPeerInfo.HttpPort = mPortHttp.ToString();
                 mBeacon = new Beacon();
+                mBeacon.EnableBroadcast = mSettings.EnableBeaconBroadcast;
                 mBeacon.Start(BROADCAST_HEADER, mPeerInfo);
                 mBeacon.PeerAdded += mBeacon_PeerAdded;
                 mBeacon.PeerRemoved += mBeacon_PeerRemoved;
@@ -342,7 +366,14 @@ namespace Gosub.OpenViewtopServer
                 return;
 
             Log.Write("Starting web server");
-            labelSecureLink.Text = "Starting...";
+            labelHttpsLink.Text = "Starting...";
+            labelHttpsLink.Enabled = true;
+            labelHttpsLink.Links.Clear();
+            labelHttpLink.Text = "";
+            labelHttpLink.Visible = true;
+            labelHttpLink.Links.Clear();
+
+
             Refresh();
             string machineName = "";
             try
@@ -351,55 +382,70 @@ namespace Gosub.OpenViewtopServer
                 machineName = Dns.GetHostName();
                 if (machineName.Trim() == "")
                     machineName = "localhost";
-                if (mSettings.Name.Trim() == "")
+                if (mSettings.Nickname.Trim() == "")
                 {
-                    mSettings.Name = machineName;
-                    textName.Text = machineName;
+                    mSettings.Nickname = machineName;
+                    textNickname.Text = machineName;
                 }
                 mOvtServer = new ViewtopServer();
                 mOvtServer.LocalComputerInfo.ComputerName = machineName;
-                mOvtServer.LocalComputerInfo.Name = mSettings.Name;
+                mOvtServer.LocalComputerInfo.Name = mSettings.Nickname;
+                mOvtServer.LocalComputerInfo.HttpsPort = mPortHttps.ToString();
+                mOvtServer.LocalComputerInfo.HttpPort = mPortHttp.ToString();
 
-                // Setup HTTP server
+                // Setup server
                 mHttpServer = new HttpServer();
                 mHttpServer.HttpHandler += (context) => 
                 {
-                    if (context.Request.Target == "/ovt/log")
+                    var ep = context.LocalEndPoint as IPEndPoint;
+                    if (ep != null && ep.Port == mPortForwardToHttps)
+                    {
+                        var r = context.Response;
+                        r.StatusCode = 301;
+                        r.StatusMessage = "Moved Permanently";
+                        r.Headers["location"] = "https://" + context.Request.HostNoPort + ":" + mPortHttps + context.Request.Path;
+                        return context.SendResponseAsync("");
+                    }
+                    if (context.Request.Path == "/ovt/log")
                         return context.SendResponseAsync(Log.GetAsString(200));
                     return mOvtServer.ProcessOpenViewtopRequestAsync(context);
                 };
-                mHttpServer.Start(new TcpListener(IPAddress.Any, mHttpPort));
-                mOvtServer.LocalComputerInfo.HttpPort = mHttpPort.ToString();
+                // Start servers
+                mHttpServer.Start(new TcpListener(IPAddress.Any, mPortForwardToHttps));
+                mHttpServer.Start(new TcpListener(IPAddress.Any, mPortHttp));
 
-                // Setup HTTPS connection
-                mHttpServer.Start(new TcpListener(IPAddress.Any, mHttpsPort), Util.GetCertificate());
-                mOvtServer.LocalComputerInfo.HttpsPort = mHttpsPort.ToString();
+                Log.Write("HTTP web server running");
+
+                string link = "http://" + machineName + ":" + mPortHttp;
+                string text = "";
+                labelHttpLink.Text = "HTTP:" + mPortHttp;
+                labelHttpLink.Links.Add(text.Length, link.Length, link);
+
+                try
+                {
+                    mHttpServer.Start(new TcpListener(IPAddress.Any, mPortHttps), Util.GetCertificate());
+
+                    Log.Write("HTTPS web server running");
+                    link = "https://" + machineName + ":" + mPortHttps;
+                    text = "";
+                    labelHttpsLink.Text = "HTTPS:" + mPortHttps;
+                    labelHttpsLink.Links.Add(text.Length, link.Length, link);
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("StartWebServer, could not start HTTPS: " + ex.Message);
+                    labelHttpsLink.Text = "HTTPS Error";
+                }
             }
             catch (Exception ex)
             {
                 Log.Write("StartWebServer", ex);
                 try { mHttpServer.Stop(); } catch { }
                 mHttpServer = null;
-                labelSecureLink.Text = "Error: " + ex.Message;
+                labelHttpsLink.Text = "Error: " + ex.Message;
+                labelHttpLink.Text = "";
                 throw;
             }
-
-            Log.Write("Web server running");
-            string link = "https://" + machineName + ":" + mHttpsPort;
-            string text = "";
-            labelSecureLink.Text = text + link;
-            labelSecureLink.Links.Clear();
-            labelSecureLink.Links.Add(text.Length, link.Length, link);
-            labelSecureLink.Enabled = true;
-
-            link = "http://" + machineName + ":" + mHttpPort;
-            text = "";
-            labelUnsecureLink.Text = text + link;
-            labelUnsecureLink.Links.Clear();
-            labelUnsecureLink.Links.Add(text.Length, link.Length, link);
-            labelUnsecureLink.Visible = true;
-
-            GetPublicIpAddress();
         }
 
         async void GetPublicIpAddress()
@@ -413,13 +459,20 @@ namespace Gosub.OpenViewtopServer
                     var match = regex.Match(page);
                     if (match.Success)
                     {
+                        Log.Write("GetPublicIpAddress = " + match.Value);
                         labelPublicIpAddress.Text = "Public IP address: " + match.Value;
                         mOvtServer.LocalComputerInfo.PublicIp = match.Value;
                     }
+                    else
+                    {
+                        Log.Write("GetPublicIpAddress: Could not find IP address ");
+                        labelPublicIpAddress.Text = "Could not obtain public IP address";
+                    }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Write("GetPublicIpAddress: Error retrieving IP address: " + ex.Message);
                 labelPublicIpAddress.Text = "Could not obtain public IP address";
             }
         }
@@ -431,10 +484,10 @@ namespace Gosub.OpenViewtopServer
             mHttpServer = null;
             mOvtServer = new ViewtopServer();
 
-            labelSecureLink.Text = "Web Server stopped";
-            labelSecureLink.Enabled = false;
-            labelUnsecureLink.Text = "Web server stopped";
-            labelUnsecureLink.Visible = false;
+            labelHttpsLink.Text = "Stopped";
+            labelHttpsLink.Enabled = false;
+            labelHttpLink.Text = "";
+            labelHttpLink.Visible = false;
         }
 
         private void listUsers_SelectedIndexChanged(object sender, EventArgs e)
@@ -482,16 +535,28 @@ namespace Gosub.OpenViewtopServer
             SaveUserFile(userFile);
         }
 
-        private void textName_TextChanged(object sender, EventArgs e)
+        private void textNickname_TextChanged(object sender, EventArgs e)
         {
-            mPeerInfo.Name = textName.Text + (mDebug ? " - DEBUG" : "");
-            mSettings.Name = textName.Text;
-            mOvtServer.LocalComputerInfo.Name = textName.Text;
+            mPeerInfo.Name = textNickname.Text + (mDebug ? " - DEBUG" : "");
+            mSettings.Nickname = textNickname.Text;
+            mOvtServer.LocalComputerInfo.Name = textNickname.Text;
         }
 
-        private void textName_Leave(object sender, EventArgs e)
+        private void textNickname_Leave(object sender, EventArgs e)
         {
-            Settings.Save(mSettings);
+            SaveSettings();
+        }
+
+        void SaveSettings()
+        {
+            try
+            {
+                Settings.Save(mSettings);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Error saving settings: " + ex, App.Name);
+            }
         }
 
         // Called when a new peer is detected
@@ -503,7 +568,7 @@ namespace Gosub.OpenViewtopServer
 
             // Add row to grid
             mPeers.Add(peer.Key);
-            gridRemote.Rows.Add("", "", "", "");
+            gridRemote.Rows.Add("", "", "", "", "", "");
             mRemotes.Add(new ViewtopServer.ComputerInfo());
             RefreshPeerGrid();
         }
@@ -614,47 +679,50 @@ namespace Gosub.OpenViewtopServer
                 var info = (PeerInfo)peer.Info;
                 var lastTimeReceived = (now - peer.TimeReceived).TotalMilliseconds;
                 string status;
-                Color color;
+                Color statusColor;
                 if (info.State == Beacon.State.Exit)
                 {
                     status = "Exiting...";
-                    color = Color.Blue;
+                    statusColor = Color.Blue;
                 }
                 else if (lastTimeReceived > PROBLEM_PEER_TIME_MS)
                 {
                     status = "Lost connection!";
-                    color = Color.Red;
+                    statusColor = Color.Red;
                 }
                 else if (!peer.ConnectionEstablished)
                 {
                     status = "Connecting...";
-                    color = Color.Gray;
+                    statusColor = Color.Gray;
                 }
                 else if (peer.UsingNat)
                 {
                     status = "Using NAT";
-                    color = Color.Red;
+                    statusColor = Color.Red;
                 }
                 else
                 {
                     status = "Ok";
-                    color = Color.Black;
+                    statusColor = Color.Black;
                 }
 
                 // Add grid row
                 // NOTE: Using the computer name doesn't always work because our DNS server may
                 //       not have resolved it yet.  So, for now, use the IP address instead.
-                string linkComputerName = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
-                string linkIpAddress = "https://" + peer.EndPoint.Address + ":" + info.HttpsPort;
                 var name = info.Name.Trim() == "" ? "" : " (" + info.Name + ")";
-                gridRemote[0, rowIndex].Value = new GridLink(info.Name, linkComputerName);
-                gridRemote[1, rowIndex].Value = new GridLink(info.ComputerName, linkComputerName);
-                gridRemote[2, rowIndex].Value = new GridLink(peer.EndPoint.Address.ToString(), linkIpAddress);
-                gridRemote[3, rowIndex].Value = new GridLink(status, linkIpAddress);
-                gridRemote[0, rowIndex].Style.ForeColor = color;
-                gridRemote[1, rowIndex].Style.ForeColor = color;
-                gridRemote[2, rowIndex].Style.ForeColor = color;
-                gridRemote[3, rowIndex].Style.ForeColor = color;
+                var gridRow = gridRemote.Rows[rowIndex].Cells;
+                gridRow[GR_COL_NAME].Value = info.Name;
+                gridRow[GR_COL_COMPUTER].Value = info.ComputerName;
+                gridRow[GR_COL_IP].Value = peer.EndPoint.Address.ToString();
+                gridRow[GR_COL_HTTP_PORT].Value = new GridLink(":" + info.HttpPort, "http://" + peer.EndPoint.Address + ":" + info.HttpPort);
+                gridRow[GR_COL_HTTP_PORT].Style.Font = new Font(gridRemote.Font, FontStyle.Underline);
+                gridRow[GR_COL_HTTP_PORT].Style.ForeColor = Color.Blue;
+                gridRow[GR_COL_HTTPS_PORT].Value = new GridLink(":" + info.HttpsPort, "https://" + peer.EndPoint.Address + ":" + info.HttpsPort);
+                gridRow[GR_COL_HTTPS_PORT].Style.Font = new Font(gridRemote.Font, FontStyle.Underline);
+                gridRow[GR_COL_HTTPS_PORT].Style.ForeColor = Color.Blue;
+                gridRow[GR_COL_STATUS].Value = status;
+                gridRow[GR_COL_STATUS].Style.ForeColor = statusColor;
+
                 var remote = mRemotes[rowIndex];
                 remote.Name = info.Name;
                 remote.ComputerName = info.ComputerName;
@@ -670,20 +738,40 @@ namespace Gosub.OpenViewtopServer
         {
             if (e.RowIndex < 0 || e.ColumnIndex < 0)
                 return;
-            ProcessStartAsLoggedOnUser(((GridLink)gridRemote[e.ColumnIndex, e.RowIndex].Value).Link);
+            var link = gridRemote[e.ColumnIndex, e.RowIndex].Value as GridLink;
+            if (link != null)
+                ProcessStartAsLoggedOnUser(link.Link);
+        }
+
+        private void gridRemote_CellMouseEnter(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex >= 0 && (e.ColumnIndex == GR_COL_HTTPS_PORT || e.ColumnIndex == GR_COL_HTTP_PORT))
+                gridRemote.Cursor = Cursors.Hand;
+        }
+
+        private void gridRemote_CellMouseLeave(object sender, DataGridViewCellEventArgs e)
+        {
+            gridRemote.Cursor = Cursors.Default;
+        }
+        private void gridRemote_SelectionChanged(object sender, EventArgs e)
+        {
+            // Disable row selection
             while (gridRemote.SelectedRows.Count != 0)
                 gridRemote.SelectedRows[0].Selected = false;
         }
 
-        private void buttonRefreshRemoteComputers_Click(object sender, EventArgs e)
+        private void buttonFindRemoteComputers_Click(object sender, EventArgs e)
         {
-            try { mBeacon.Stop(); }
-            catch { }
-            mBeacon = null;
-            mPeers.Clear();
-            gridRemote.Rows.Clear();
-            StartBeacon();
-            GetPublicIpAddress();
+            var ip = FormInputBox.ShowDialog(this, "Enter IP address:");
+            if (ip == "")
+                return;
+            if (!IPAddress.TryParse(ip, out IPAddress address))
+            {
+                MessageBox.Show(this, "Invalid IP address.  Enter four numbers from 0 to 255 separted by periods (e.g. '192.168.0.32', etc.)");
+                return;
+            }
+
+            mBeacon.Ping(address);
         }
 
         /// <summary>
@@ -710,5 +798,55 @@ namespace Gosub.OpenViewtopServer
             ShowOnTop();
         }
 
+        private void checkBroadcast_CheckedChanged(object sender, EventArgs e)
+        {
+            if (mSettings.EnableBeaconBroadcast != checkBroadcast.Checked)
+            {
+                mSettings.EnableBeaconBroadcast = checkBroadcast.Checked;
+                if (mBeacon != null)
+                    mBeacon.EnableBroadcast = mSettings.EnableBeaconBroadcast;
+                SaveSettings();
+            }
+
+        }
+
+        private void buttonRegenerateSelfSignedCertificate_Click(object sender, EventArgs e)
+        {
+            if (MessageBox.Show(this, "Are you sure you want to regenerate the self-signed certificate?", App.Name, MessageBoxButtons.YesNo) == DialogResult.Yes)
+            {
+                try
+                {
+                    StopWebServer();
+                    Util.RegenerateSelfSignedCertificte();
+                    MessageBox.Show(this, "A new self signed certificate has been generated", App.Name);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "ERROR: " + ex.Message, App.Name);
+                }
+            }
+        }
+
+        private void buttonLoadSignedCertificate_Click(object sender, EventArgs e)
+        {
+            openFileDialog1.FileName = "";
+            openFileDialog1.Title = App.Name;
+            openFileDialog1.Multiselect = false;
+            openFileDialog1.Filter = "PFX file (*.pfx)|*.pfx";
+            openFileDialog1.ShowDialog(this);
+            if (openFileDialog1.FileName == "")
+                return; // User cancelled
+
+            try
+            {
+                StopWebServer();
+                Util.LoadCertificateFile(openFileDialog1.FileName);
+                MessageBox.Show(this, "New certificate loaded succesfully", App.Name);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "ERROR: " + ex.Message, App.Name);
+            }
+        }
     }
 }

@@ -103,13 +103,13 @@ namespace Gosub.Viewtop
         {
             // Process web sockets to allow login and authentication
             var request = context.Request;
-            if (request.Target == "/ovt/ws" && context.Request.IsWebSocketRequest)
+            if (request.Path == "/ovt/ws" && context.Request.IsWebSocketRequest)
             {
                 PurgeInactiveSessions();
                 await ProcessOpenViewtopWebSocketsAsync(context.AcceptWebSocket("viewtop"));
                 return;
             }
-            if (request.Target == "/ovt/info")
+            if (request.Path == "/ovt/info")
             {
                 // Do not send when IP address is on the public internet.  TBD: Allow 172.17, etc.
                 var ip = ((IPEndPoint)context.RemoteEndPoint).Address.ToString();
@@ -122,7 +122,8 @@ namespace Gosub.Viewtop
                 return;
             }
             // Requests with a valid SID (session id) get routed to the session
-            if (long.TryParse(request.Query.Get("sid"), out long sid) && sid != 0)
+            long sid = request.Query["sid", 0];
+            if (sid != 0)
             {
                 ViewtopSession session;
                 lock (mLock)
@@ -136,7 +137,7 @@ namespace Gosub.Viewtop
             // *** Serve public static files ***
 
             // Convert path to Windows, strip leading "\", and choose "index" if no name is given
-            string path = request.Target.Replace('/', Path.DirectorySeparatorChar);
+            string path = request.Path.Replace('/', Path.DirectorySeparatorChar);
             while (path.Length != 0 && path[0] == Path.DirectorySeparatorChar)
                 path = path.Substring(1);
             if (path.Length == 0)
@@ -149,7 +150,7 @@ namespace Gosub.Viewtop
             path = Path.Combine(publicSubdirectory, path);
             if (path.Contains("..") || path.Contains(hiddenFileName))
                 throw new HttpException(400, "Invalid Request: File name is invalid", true);
-            if (request.HttpMethod != "GET")
+            if (request.Method != "GET")
                 throw new HttpException(405, "Invalid HTTP request: Only GET method is allowed for serving ");
 
             if (mMimeTypes.TryGetValue(Path.GetExtension(path).ToLower(), out string contentType))

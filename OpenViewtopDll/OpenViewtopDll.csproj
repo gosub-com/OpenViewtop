@@ -63,7 +63,7 @@
   <ItemGroup>
     <Compile Include="Http\HttpExceptions.cs" />
     <Compile Include="Http\HttpContext.cs" />
-    <Compile Include="Http\HttpQuery.cs" />
+    <Compile Include="Http\HttpDict.cs" />
     <Compile Include="Http\HttpReader.cs" />
     <Compile Include="Http\HttpRequest.cs" />
     <Compile Include="Http\HttpResponse.cs" />
@@ -87,7 +87,6 @@
     <Compile Include="Viewtop\MouseAndKeyboard.cs" />
     <Compile Include="Viewtop\NativeMethods.cs" />
     <Compile Include="Viewtop\Users.cs" />
-    <Compile Include="Viewtop\PFXGenerator.cs" />
     <Compile Include="Viewtop\Util.cs" />
     <Compile Include="Viewtop\ViewtopServer.cs" />
     <Compile Include="Viewtop\ViewtopSession.cs" />

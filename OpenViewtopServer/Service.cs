@@ -105,10 +105,10 @@ namespace Gosub.OpenViewtopServer
                 mHttpSeviceServer = new HttpServer();
                 mHttpSeviceServer.HttpHandler += (context) =>
                 {
-                    if (context.Request.Target == "/ovt/log")
+                    if (context.Request.Path == "/ovt/log")
                         return context.SendResponseAsync(Log.GetAsString(200));
-                    Log.Write("FILE NOT FOUND: " + context.Request.Target);
-                    return context.SendResponseAsync("File not found: " + context.Request.Target, 404);
+                    Log.Write("FILE NOT FOUND: " + context.Request.Path);
+                    return context.SendResponseAsync("File not found: " + context.Request.Path, 404);
                 };
                 mHttpSeviceServer.Start(new TcpListener(IPAddress.Any, HTTP_PORT));
             }

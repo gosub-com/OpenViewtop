@@ -17,10 +17,9 @@ namespace Gosub.Viewtop
     /// </summary>
     public class Beacon
     {
-        const int BROADCAST_PORT = 24706;
-        const int BROADCAST_TIME_MS = 1400;
-        const int BROADCAST_DETECT_MS = 1600;
-        public delegate void PeerChangedDelegate(Peer peer);
+        const int BROADCAST_PORT = 8150;
+        const int BROADCAST_TIME_MS = 9000;
+        const int PING_TIME_MS = 2100;
 
         byte[] mHeader;
         string mHeaderStr;
@@ -33,14 +32,18 @@ namespace Gosub.Viewtop
 
         DateTime mBroadcastTime;
         List<IPAddress> mBroadcastAddresses;
+        List<IPAddress> mLocalAddresses;
 
         JsonSerializer mJsonSerializer = new JsonSerializer();
         MemoryStream mWriteBuffer = new MemoryStream();
         byte[] mReadBuffer = new byte[0];
 
+        public delegate void PeerChangedDelegate(Peer peer);
         public event PeerChangedDelegate PeerAdded;
         public event PeerChangedDelegate PeerRemoved;
         public event PeerChangedDelegate PeerConnectionEstablishedChanged;
+
+        public bool EnableBroadcast { get; set; } = true;
 
         /// <summary>
         /// Start the beacon with the given beacon info.
@@ -64,7 +67,7 @@ namespace Gosub.Viewtop
 
             NetworkChange.NetworkAddressChanged += NetworkChange_NetworkAddressChanged;
             NetworkChange.NetworkAvailabilityChanged += NetworkChange_NetworkAvailabilityChanged;
-            mBroadcastAddresses = EnumerateNetworks();
+            EnumerateNetworks();
         }
 
         public void Stop()
@@ -97,30 +100,13 @@ namespace Gosub.Viewtop
         }
 
         /// <summary>
-        /// Get a list of all broadcast networks
-        /// </summary>
-        public IPAddress []GetBroadcastAddresses()
-        {
-            if (mBroadcastAddresses == null)
-                mBroadcastAddresses = EnumerateNetworks();
-            return mBroadcastAddresses.ToArray();
-        }
-
-        /// <summary>
         /// Return a list of active local IP addresses.
-        /// Using Dns.GetHostEntry can return multple IP addresses which
-        /// are not necessarily active.  This returns only active local
-        /// IP addresses since we are actively pinging ourself.
         /// </summary>
-        /// <returns></returns>
         public IPAddress[]GetLocalAddresses()
         {
-            // Find unique addresses
-            var uniqueAddresses = new Dictionary<IPAddress, bool>();
-            foreach (var peer in mPeers)
-                if (peer.Value.ThisBeacon)
-                    uniqueAddresses[peer.Value.EndPoint.Address] = true;
-            return uniqueAddresses.Keys.ToArray();
+            if (mBroadcastAddresses == null || mLocalAddresses == null)
+                EnumerateNetworks();
+            return mLocalAddresses.ToArray();
         }
 
         /// <summary>
@@ -171,15 +157,16 @@ namespace Gosub.Viewtop
             while (mSocketUnicast.Available > 0)
                 ProcessResponse(mSocketUnicast, false);
 
-            // Periodically broadcast our presense
+            // Periodically broadcast our presense and keep the incoming UDP port open
             var now = DateTime.Now;
-            if (now - mBroadcastTime > new TimeSpan(0, 0, 0, 0, BROADCAST_TIME_MS))
+            if (EnableBroadcast
+                 && now - mBroadcastTime > new TimeSpan(0, 0, 0, 0, BROADCAST_TIME_MS))
             {
                 mBroadcastTime = now;
 
                 // Enumerate networks if they have changed
                 if (mBroadcastAddresses == null)
-                    mBroadcastAddresses = EnumerateNetworks();
+                    EnumerateNetworks();
 
                 // Send broadcasts to all networks
                 foreach (var ip in mBroadcastAddresses)
@@ -192,12 +179,13 @@ namespace Gosub.Viewtop
                     // We want a response to this brodacast
                     SendResponse(mSocketUnicast, new IPEndPoint(ip, BROADCAST_PORT), State.Broadcast);
                 }
-
-                // Ping any peers that are not broadcasting
-                foreach (var peer in mPeers)
-                    if (now - peer.Value.TimeReceived > new TimeSpan(0, 0, 0, 0, BROADCAST_DETECT_MS))
-                        SendResponse(mSocketUnicast, peer.Value.EndPoint, State.Ping);
             }
+
+            // Ping any peers that have not communicated for a while
+            foreach (var peer in mPeers)
+                if (now - peer.Value.TimeReceived > new TimeSpan(0, 0, 0, 0, PING_TIME_MS))
+                    SendResponse(mSocketUnicast, peer.Value.EndPoint, State.Ping);
+
         }
 
         /// <summary>
@@ -205,7 +193,10 @@ namespace Gosub.Viewtop
         /// </summary>
         public void Ping(IPAddress ip)
         {
-            SendResponse(mSocketUnicast, new IPEndPoint(ip, BROADCAST_PORT), State.Broadcast);
+            var ep = new IPEndPoint(ip, BROADCAST_PORT);
+            SendResponse(mSocketUnicast, ep, State.Broadcast);
+            SendResponse(mSocketUnicast, ep, State.Broadcast);
+            SendResponse(mSocketUnicast, ep, State.Ping);
         }
 
         private void NetworkChange_NetworkAvailabilityChanged(object sender, NetworkAvailabilityEventArgs e)
@@ -218,10 +209,14 @@ namespace Gosub.Viewtop
             mBroadcastAddresses = null;
         }
 
-        List<IPAddress> EnumerateNetworks()
+        /// <summary>
+        /// Sets mBroadcastAddresses and mLocalAddresses
+        /// </summary>
+        void EnumerateNetworks()
         {
             // Find network broadcast addresses without duplicates
-            var uniqueAddresses = new Dictionary<string, IPAddress>();
+            var broadcastAddresses = new Dictionary<string, IPAddress>();
+            var localAddresses = new Dictionary<string, IPAddress>();
             foreach (var nif in NetworkInterface.GetAllNetworkInterfaces())
             {
                 if (nif.IsReceiveOnly || nif.OperationalStatus != OperationalStatus.Up)
@@ -230,6 +225,8 @@ namespace Gosub.Viewtop
                 {
                     if (unicast.Address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(unicast.Address))
                         continue;
+
+                    localAddresses[unicast.Address.ToString()] = unicast.Address;
 
                     // Create broadcast address
                     var addressBytes = unicast.Address.GetAddressBytes();
@@ -249,14 +246,12 @@ namespace Gosub.Viewtop
                     for (int i = 0; i < maskBytes.Length; i++)
                         addressBytes[i] = (byte)(addressBytes[i] & maskBytes[i] | ~maskBytes[i]);
                     var broadcastIp = new IPAddress(addressBytes);
-                    uniqueAddresses[broadcastIp.ToString()] = broadcastIp;
+                    broadcastAddresses[broadcastIp.ToString()] = broadcastIp;
                 }
             }
             // Create list of addresses
-            var addresses = new List<IPAddress>();
-            foreach (var address in uniqueAddresses)
-                addresses.Add(address.Value);
-            return addresses;
+            mBroadcastAddresses = broadcastAddresses.Values.ToList();
+            mLocalAddresses = localAddresses.Values.ToList();
         }
 
         void ProcessResponse(Socket socket, bool broadcastSocket)

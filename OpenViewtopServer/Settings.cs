@@ -13,7 +13,8 @@ namespace Gosub.Viewtop
     {
         const string SETTINGS_FILE_NAME = "Settings.json";
 
-        public string Name = "";
+        public string Nickname = "";
+        public bool EnableBeaconBroadcast = true;
 
         public static Settings Load()
         {
@@ -35,6 +36,7 @@ namespace Gosub.Viewtop
         {
             var fileName = Path.Combine(Application.CommonAppDataPath, SETTINGS_FILE_NAME);
             File.WriteAllText(fileName, JsonConvert.SerializeObject(settings));
+            Util.SetWorldAccessControl(fileName);
         }
     }
 }

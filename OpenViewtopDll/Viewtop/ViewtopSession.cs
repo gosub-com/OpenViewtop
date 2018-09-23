@@ -112,14 +112,14 @@ namespace Gosub.Viewtop
         /// </summary>
         public async Task ProcessOpenViewtopRequestAsync(HttpContext context)
         {
-            if (context.Request.Target == "/ovt/clip")
+            if (context.Request.Path == "/ovt/clip")
             {
                 if (!mClip.EverChanged)
                     throw new HttpException(400, "Not allowed to access clipboard until data is copied", true);
                 await SendClipDataAsync(context);
                 return;
             }
-            throw new HttpException(400, "Unknown url: '" + context.Request.Target + "'", true);
+            throw new HttpException(400, "Unknown url: '" + context.Request.Path + "'", true);
         }
 
         public async Task ProcessOpenViewtopWebSocketsAsync(WebSocket websocket)
@@ -212,7 +212,9 @@ namespace Gosub.Viewtop
             mScreenScale = drawRequest.Collector.Scale;
             mCollectors.Enqueue(drawRequest.Collector);
             var frame = new FrameInfo();
-            GetFrame(drawRequest.Collector, HttpContext.ParseQueryString(drawRequest.DrawOptions), frame);
+            var query = new HttpDict();
+            HttpRequest.ParseQueryString(drawRequest.DrawOptions, query);
+            GetFrame(drawRequest.Collector, query, frame);
             GetClipInfo(frame);
 
             frame.Seq = drawRequest.Seq; // TBD: Remove?
@@ -252,13 +254,13 @@ namespace Gosub.Viewtop
             }
         }
 
-        void GetFrame(FrameCollector collector, HttpQuery queryString, FrameInfo frame)
+        void GetFrame(FrameCollector collector, HttpDict queryString, FrameInfo frame)
         {
             // Full frame analysis
-            mAnalyzer.FullFrame = queryString.Get("fullframe") != "";
+            mAnalyzer.FullFrame = queryString["fullframe"] != "";
 
             // Process compression type
-            string compressionType = queryString.Get("compression").ToLower();
+            string compressionType = queryString["compression"].ToLower();
             if (compressionType == "png")
                 mAnalyzer.Compression = FrameCompressor.CompressionType.Png;
             else if (compressionType == "jpg")
@@ -267,7 +269,7 @@ namespace Gosub.Viewtop
                 mAnalyzer.Compression = FrameCompressor.CompressionType.SmartPng;
 
             // Process output type
-            string outputType = queryString.Get("output").ToLower();
+            string outputType = queryString["output"].ToLower();
             if (outputType == "fullframejpg")
                 mAnalyzer.Output = FrameCompressor.OutputType.FullFrameJpg;
             else if (outputType == "fullframepng")

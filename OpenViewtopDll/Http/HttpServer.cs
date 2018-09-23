@@ -143,14 +143,18 @@ namespace Gosub.Http
             do
             {
                 persistentConnections++;
-
-                // Read header
-                reader.ReadTimeout = HeaderTimeout;
-
                 try
                 {
-                    if (!await context.ReadHttpHeaderAsyncInternal().ConfigureAwait(false))
-                        return; // Connection closed
+                    // Read header
+                    reader.ReadTimeout = HeaderTimeout;
+                    var buffer = await reader.ReadHttpHeaderAsyncInternal();
+                    reader.PositionInternal = 0;
+                    reader.LengthInternal = HttpContext.HTTP_HEADER_MAX_SIZE;
+                    if (buffer.Count == 0)
+                        return;  // Connection closed
+
+                    // Parse header
+                    context.ResetRequestInternal(HttpRequest.Parse(buffer), new HttpResponse());
                 }
                 catch (Exception ex)
                 {
@@ -159,8 +163,8 @@ namespace Gosub.Http
                 }
 
                 // Handle body
-                reader.ReadTimeout = HeaderTimeout;
-                writer.WriteTimeout = HeaderTimeout;
+                reader.ReadTimeout = BodyTimeout;
+                writer.WriteTimeout = BodyTimeout;
                 try
                 {
                     // Process HTTP request
@@ -181,12 +185,12 @@ namespace Gosub.Http
                 var request = context.Request;
                 var isWebsocket = request.IsWebSocketRequest;
                 if (!response.HeaderSent)
-                    throw new HttpException(500, "Request handler did not send a response for: " + context.Request.TargetFull);
+                    throw new HttpException(500, "Request handler did not send a response for: " + context.Request.Path);
                 if (!isWebsocket && reader.Position != request.ContentLength && request.ContentLength >= 0)
-                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + request.TargetFull);
+                    throw new HttpException(500, "Request handler did not read correct number of bytes: " + request.Path);
                 if (!isWebsocket && writer.Position != response.ContentLength)
-                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + request.TargetFull);
-            } while (!context.Request.IsWebSocketRequest && context.Response.KeepAlive);
+                    throw new HttpException(500, "Request handler did not write correct number of bytes: " + request.Path);
+            } while (!context.Request.IsWebSocketRequest && context.Response.Connection == "keep-alive");
         }
 
         // Try to send an error message back to the client

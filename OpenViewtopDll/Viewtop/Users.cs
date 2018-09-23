@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Windows;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using Newtonsoft.Json;
 using System.Windows.Forms;
 using System.IO;
@@ -33,7 +30,10 @@ namespace Gosub.Viewtop
         {
             var fileName = Path.Combine(Application.CommonAppDataPath, USER_FILE_NAME);
             lock (sLock)
+            {
                 File.WriteAllText(fileName, JsonConvert.SerializeObject(users));
+                Util.SetWorldAccessControl(fileName);
+            }
         }
 
         public static bool ValidUserName(string userName)

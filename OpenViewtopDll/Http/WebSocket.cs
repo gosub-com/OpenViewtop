@@ -52,42 +52,36 @@ namespace Gosub.Http
         }
 
         /// <summary>
-        /// Only called by HttpServer
+        /// Only called by HttpContext
         /// </summary>
-        internal WebSocket(HttpContext context, HttpReader reader, HttpWriter writer, string protocol)
+        internal WebSocket(HttpContext context, string protocol)
         {
             mState = WebSocketState.Open;
             mContext = context;
-            mReader = reader;
-            mWriter = writer;
 
             var request = context.Request;
-            var requestProtocol = request.Headers.Get("sec-websocket-protocol"); // TBD: Split "," separated list
+            var requestProtocol = request.Headers["sec-websocket-protocol"]; // TBD: Split "," separated list
             if (protocol != requestProtocol)
                 throw new HttpException(400, "Invalid websocket protocol.  Client requested '" + requestProtocol + "', server accepted '" + protocol + "'");
 
             // RFC 6455, 4.2.1 and 4.2.2
-            string key = request.Headers.Get("sec-websocket-key");
+            string key = request.Headers["sec-websocket-key"];
             if (key == "")
                 throw new HttpException(400, "Websocket key not sent by client");
             string keyHash;
             using (var sha = SHA1.Create())
                 keyHash = Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
 
-            // Generate HTTP header
-            string header = "HTTP/1.1 101 Switching Protocols" + CRLF
-                            + "Connection: Upgrade" + CRLF
-                            + "Upgrade: websocket" + CRLF
-                            + "Sec-WebSocket-Accept: " + keyHash + CRLF
-                            + "Sec-WebSocket-Protocol: " + protocol + CRLF
-                            + CRLF;
-
-            // Freeze HTTP response and send header
-            mContext.Response.HeaderSent = true;
-            mWriter.PositionInternal = 0;
-            mWriter.LengthInternal = long.MaxValue;
-            mReader.LengthInternal = long.MaxValue;
-            mWriter.SetPreWriteTaskInternal(mWriter.WriteAsync(Encoding.UTF8.GetBytes(header)));
+            var response = mContext.Response;
+            response.StatusCode = 101;
+            response.StatusMessage = "Switching Protocols";
+            response.Connection = "Upgrade";
+            response.Headers["upgrade"] = "websocket";
+            response.Headers["Sec-WebSocket-Accept"] = keyHash;
+            response.Headers["Sec-WebSocket-Protocol"] = protocol;
+            request.ContentLength = long.MaxValue; // Stream never ends
+            mWriter = mContext.GetWriter(long.MaxValue);
+            mReader = mContext.GetReader();
         }
 
         /// <summary>
