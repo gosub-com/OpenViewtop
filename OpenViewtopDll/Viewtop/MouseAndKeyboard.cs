@@ -4,6 +4,7 @@ using System.Text;
 using System.Diagnostics;
 using System.Windows.Forms;
 using System.Drawing;
+using Gosub.Http;
 using static Gosub.Viewtop.NativeMethods;
 
 namespace Gosub.Viewtop
@@ -79,7 +80,7 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("Error sending mouse event: " + ex.Message);
+                Log.Write("Error sending mouse event: " + ex.Message);
             }
         }
 
@@ -115,7 +116,7 @@ namespace Gosub.Viewtop
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("Error sending mouse event: " + ex.Message);
+                Log.Write("Error sending mouse event: " + ex.Message);
             }
         }
 
@@ -175,18 +176,15 @@ namespace Gosub.Viewtop
         {
             // Since SendKeys doesn't have a way to send SHIFT/CTRL/ALT
             // use the windows SDK directly.  We need this for drag/drop.
-            if (code == SHIFT_CODE || code == CTRL_CODE || code == ALT_CODE)
+            try
             {
                 int downFlag = action == Action.Down ? 0 : 2;
-                try
-                {
-                    keybd_event(code, 0, downFlag, IntPtr.Zero);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("Error sending key via keybd_event: " + ex.Message);
-                }
-                return;
+                keybd_event(code, 0, downFlag, IntPtr.Zero);
+                return; 
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Error sending key via keybd_event: " + ex.Message);
             }
 
             if (action != Action.Down)
@@ -209,7 +207,7 @@ namespace Gosub.Viewtop
             else
             {
                 // Unrecognized control
-                Debug.WriteLine("Unrecognized code: " + code);
+                Log.Write("Unrecognized code: " + code);
                 return;
             }
 
@@ -222,7 +220,7 @@ namespace Gosub.Viewtop
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine("Error sending key viar SendKeys: " + ex.Message);
+                    Log.Write("Error sending key viar SendKeys: " + ex.Message);
                 }
             });
         }

@@ -229,7 +229,7 @@ namespace Gosub.Viewtop
         /// <summary>
         /// Calculate a hash for this block
         /// </summary>
-        public int HashBlock(int x, int y, int width, int height)
+        public int HashInt(int x, int y, int width, int height)
         {
             Debug.Assert(x >= 0 && x+width <= mWidth);
             Debug.Assert(y >= 0 && y+height <= mHeight);
@@ -248,6 +248,31 @@ namespace Gosub.Viewtop
                 bmPtr += mStrideInts - width;
             }
             return (int)(hash);
+        }
+
+        public long HashLong(int x, int y, int width, int height)
+        {
+            Debug.Assert(x >= 0 && x + width <= mWidth);
+            Debug.Assert(y >= 0 && y + height <= mHeight);
+
+            // Calculate hash
+            int* bmPtr = mScan0 + y * mStrideInts + x;
+            uint hash1 = 0x12345678;
+            uint hash2 = 0xFEDBA987;
+            while (--height >= 0)
+            {
+                int w = width;
+                while (--w >= 0)
+                {
+                    // Good hash function?
+                    uint bm = (uint)*bmPtr++;
+                    hash1 += bm;
+                    hash2 += (bm ^ 0xCA965321) + hash1;
+                    hash1 += ((hash1 << 7) | (hash1 >> 25));
+                }
+                bmPtr += mStrideInts - width;
+            }
+            return ((long)(hash1) << 32) | hash2;
         }
 
         /// <summary>

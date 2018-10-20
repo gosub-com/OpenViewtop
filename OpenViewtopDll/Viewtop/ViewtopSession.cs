@@ -14,13 +14,16 @@ namespace Gosub.Viewtop
 {
     class ViewtopSession
     {
+        const int REMOTE_COMMUNICATIONS_TIMEOUT_MS = 8000;
+        const int WAIT_FOR_SCREEN_CHANGE_TIMEOUT_MS = 2000;
         const int MAX_FILE_COUNT = 100;
 
         public long SessionId { get; }
         public bool SessionClosed => mSessionClosed;
-        object mLock = new object();
+        object mLockScreenCopy = new object();
         object mLockZip = new object();
         bool mSessionClosed;
+        long mLastScreenHash;
 
         double mScreenScale = 1;
         Queue<FrameCollector> mCollectors = new Queue<FrameCollector>(new FrameCollector[] { new FrameCollector(), new FrameCollector() });
@@ -87,8 +90,8 @@ namespace Gosub.Viewtop
         struct CollectRequest
         {
             public FrameCollector Collector;
-            public long Seq;
-            public string DrawOptions;
+            public RemoteDrawRequest DrawRequest;
+            public HttpDict Query;
             public Task Task;
         }
 
@@ -162,10 +165,14 @@ namespace Gosub.Viewtop
                     receiveTask = websocket.ReceiveAsync(mWebsocketRequestStream, CancellationToken.None);
 
                 // Await something to do (message from remote, or a completed screen capture)
+                var timeout = Task.Delay(REMOTE_COMMUNICATIONS_TIMEOUT_MS);
                 if (mCollectRequests.Count != 0)
-                    await Task.WhenAny(new Task[] { mCollectRequests.Peek().Task, receiveTask });
+                    await Task.WhenAny(new Task[] { timeout, mCollectRequests.Peek().Task, receiveTask });
                 else
-                    await receiveTask;
+                    await Task.WhenAny(new Task[] { timeout, receiveTask });
+
+                if (timeout.IsCompleted)
+                    break;
 
                 // Send frames that may have completed in the background
                 while (mCollectRequests.Count != 0 && mCollectRequests.Peek().Task.IsCompleted)
@@ -193,31 +200,64 @@ namespace Gosub.Viewtop
                 await DequeueCollectRequestAndSendFrame(websocket);
 
             var collector = mCollectors.Dequeue();
-            CollectRequest collectRequest;
+            CollectRequest collectRequest = new CollectRequest();
             collectRequest.Collector = collector;
-            collectRequest.Seq = request.DrawRequest.Seq;
-            collectRequest.DrawOptions = request.DrawRequest.Options;
+            collectRequest.DrawRequest = request.DrawRequest;
+            collectRequest.Query = new HttpDict();
+            HttpRequest.ParseQueryString(collectRequest.DrawRequest.Options, collectRequest.Query);
+
+            // Copy the screen in a blocking background thread
             collectRequest.Task = Task.Run(() =>
             {
-                collector.CopyScreen(request.DrawRequest.MaxWidth, request.DrawRequest.MaxHeight);
+                if (collectRequest.Query["fullthrottle"] != "")
+                {
+                    // Wait for previous throttle to end
+                    mLastScreenHash = 0;
+                    lock (mLockScreenCopy)
+                        mLastScreenHash = 0;
+
+                    collector.CopyScreen();
+                }
+                else
+                {
+                    // Block until screen changes or timeout
+                    // NOTE: Holding this lock (even without the hash function 
+                    //       is the while loop) incurs a time penalty.  This  
+                    //       code is the big bottleneck causing a slow frame
+                    //       rate.  And mosty of the time is spent in CopyScreen.
+                    lock (mLockScreenCopy)
+                    {
+                        long hash = 0;
+                        var screenCopyTimeout = DateTime.Now;
+                        while ((DateTime.Now - screenCopyTimeout).TotalMilliseconds < WAIT_FOR_SCREEN_CHANGE_TIMEOUT_MS)
+                        {
+                            collector.CopyScreen();
+                            using (var bm = new Bitmap32Bits(collector.Screen, System.Drawing.Imaging.ImageLockMode.ReadOnly))
+                                hash = bm.HashLong(0, 0, bm.Width, bm.Height);
+                            if (hash != mLastScreenHash)
+                                break;
+                            Thread.Sleep(20);
+                        }
+                        mLastScreenHash = hash;
+                    }
+                }
+                collector.ScaleScreen(request.DrawRequest.MaxWidth, request.DrawRequest.MaxHeight);
             });
             mCollectRequests.Enqueue(collectRequest);
         }
 
         private async Task DequeueCollectRequestAndSendFrame(WebSocket websocket)
         {
-            var drawRequest = mCollectRequests.Dequeue();
-            await drawRequest.Task;
+            var collectRequest = mCollectRequests.Dequeue();
+            await collectRequest.Task;
 
-            mScreenScale = drawRequest.Collector.Scale;
-            mCollectors.Enqueue(drawRequest.Collector);
+            mScreenScale = collectRequest.Collector.Scale;
+            mCollectors.Enqueue(collectRequest.Collector);
             var frame = new FrameInfo();
-            var query = new HttpDict();
-            HttpRequest.ParseQueryString(drawRequest.DrawOptions, query);
-            GetFrame(drawRequest.Collector, query, frame);
+            GetFrame(collectRequest.Collector, collectRequest.Query, frame);
             GetClipInfo(frame);
 
-            frame.Seq = drawRequest.Seq; // TBD: Remove?
+            frame.Seq = collectRequest.DrawRequest.Seq; // TBD: Remove?
             await ViewtopServer.WriteJson(websocket, frame);
         }
 

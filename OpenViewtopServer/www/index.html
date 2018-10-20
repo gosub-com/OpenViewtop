@@ -133,6 +133,8 @@ button::-moz-focus-inner
             <tr>                   
                 <td>
                     <label><input type="checkbox" v-model="CheckFullFrame">Disable delta compression</label>
+                    <br />
+                    <label><input type="checkbox" v-model="CheckFullThrottle">Full throttle</label>
                     <br /> <br />
                     <label><input type="radio" v-model="RadioCompression" value="">Smart PNG</label>
                     <br />
@@ -181,6 +183,7 @@ button::-moz-focus-inner
             Remotes: [],
 
             CheckFullFrame: false,
+            CheckFullThrottle: false,
             RadioCompression: "",
             RadioOutput: "",
 
@@ -188,6 +191,7 @@ button::-moz-focus-inner
         },
         watch: {
             CheckFullFrame: function () { UpdateOptions(); },
+            CheckFullThrottle: function () { UpdateOptions(); },
             RadioCompression: function () { UpdateOptions(); },
             RadioOutput: function () { UpdateOptions(); }
         }
@@ -287,6 +291,8 @@ button::-moz-focus-inner
         var options = "&";
         if (app.CheckFullFrame)
             options += "fullframe=true&";
+        if (app.CheckFullThrottle)
+            options += "fullthrottle=true&"
 
         // Compression type radio buttons
         if (app.RadioCompression != "")

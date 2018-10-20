@@ -5,6 +5,8 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Collections.Generic;
 using static Gosub.Viewtop.NativeMethods;
 
 namespace Gosub.Viewtop
@@ -22,6 +24,7 @@ namespace Gosub.Viewtop
         public double Scale { get { return mScale; }  }
         public Bitmap Screen => mIsScaledScreen ? mScaledScreen : mFullScreen;
 
+
         public void Dispose()
         {
             if (mFullScreen != null)
@@ -33,13 +36,14 @@ namespace Gosub.Viewtop
         }
 
         /// <summary>
-        /// Create a copy of the screen with a maximum width and height.
-        /// Max width and height can be 0 if not specified.
+        /// Copy the screen to an internal bitmap. 
         /// </summary>
-        public void CopyScreen(int maxWidth, int maxHeight)
+        public void CopyScreen()
         {
+            var startTime = DateTime.Now;
+
             // Create the bitmap if we need to
-            var copyStartTime = DateTime.Now;
+            mIsScaledScreen = false;
             if (mFullScreen == null || mFullScreen.Width != System.Windows.Forms.Screen.PrimaryScreen.Bounds.Width
                                     || mFullScreen.Height != System.Windows.Forms.Screen.PrimaryScreen.Bounds.Height)
             {
@@ -68,15 +72,22 @@ namespace Gosub.Viewtop
                 // Draw the mouse cursor
                 var cursor = CursorInfo.GetCursor(out bool cursorNeedsDisposing);
                 var position = Cursor.Position;
-                cursor.Draw(grScreen, new Rectangle(position.X-cursor.HotSpot.X, 
-                                                    position.Y-cursor.HotSpot.Y, 
+                cursor.Draw(grScreen, new Rectangle(position.X - cursor.HotSpot.X,
+                                                    position.Y - cursor.HotSpot.Y,
                                                     cursor.Size.Width, cursor.Size.Height));
                 if (cursorNeedsDisposing)
                     cursor.Dispose();
             }
-            var postCopyTime = DateTime.Now;
-            CopyTime = postCopyTime - copyStartTime;
+            CopyTime = DateTime.Now - startTime;
+            ShrinkTime = new TimeSpan();
+        }
 
+        /// <summary>
+        /// Scale the previously copied screen (max width & height can be zero for no scaling)
+        /// </summary>
+        public void ScaleScreen(int maxWidth, int maxHeight)
+        {
+            var startTime = DateTime.Now;
 
             // Calculate scaled screen size
             if (maxWidth <= 0 || maxWidth > mFullScreen.Width)
@@ -92,7 +103,8 @@ namespace Gosub.Viewtop
                 return;
             }
             // Scale the screen down to size
-            mScale = Math.Min(maxWidth/(double)mFullScreen.Width, maxHeight/(double)mFullScreen.Height);
+            mIsScaledScreen = true;
+            mScale = Math.Min(maxWidth / (double)mFullScreen.Width, maxHeight / (double)mFullScreen.Height);
             int width = (int)(mScale * mFullScreen.Width);
             int height = (int)(mScale * mFullScreen.Height);
             if (mScaledScreen == null || mScaledScreen.Width != width || mScaledScreen.Height != height)
@@ -104,11 +116,10 @@ namespace Gosub.Viewtop
             using (Graphics grScaled = Graphics.FromImage(mScaledScreen))
             {
                 grScaled.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
-                grScaled.DrawImage(mFullScreen, new RectangleF(0, 0, mScaledScreen.Width, mScaledScreen.Height), 
+                grScaled.DrawImage(mFullScreen, new RectangleF(0, 0, mScaledScreen.Width, mScaledScreen.Height),
                                     new RectangleF(0, 0, mFullScreen.Width, mFullScreen.Height), GraphicsUnit.Pixel);
             }
-            ShrinkTime = DateTime.Now - postCopyTime;
-            mIsScaledScreen = true;
+            ShrinkTime = DateTime.Now - startTime;
         }
     }
 

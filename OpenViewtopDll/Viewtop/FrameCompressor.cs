@@ -288,7 +288,7 @@ namespace Gosub.Viewtop
             int width = Math.Min(mBlockSize, bm.Width - x);
             int height = Math.Min(mBlockSize, bm.Height - y);
 
-            int hash = bm.HashBlock(x, y, width, height);
+            int hash = bm.HashInt(x, y, width, height);
 
             if (duplicateHashToIndex.ContainsKey(hash))
             {
