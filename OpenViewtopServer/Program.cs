@@ -18,6 +18,7 @@ namespace Gosub.OpenViewtopServer
         public const string PARAM_WATCH_DESKTOP = "-watchdesktop";
         public const string PARAM_CONTROL_PIPE = "-controlpipe";
         public const string PARAM_START_BROWSER = "-startbrowser";
+        public const string PARAM_DESKTOP = "-desktop";
 
         public static Mutex ShowOnTopMutex;
 
@@ -33,6 +34,7 @@ namespace Gosub.OpenViewtopServer
         public static bool ParamIsGui = false;
         public static bool ParamIsDesktopWatcher = false;
         public static string ParamControlPipe = "";
+        public static string ParamDesktop = "";
 
         private enum ProcessDPIAwareness
         {
@@ -63,9 +65,10 @@ namespace Gosub.OpenViewtopServer
                     ParamIsGui = true;
                 else if (param == PARAM_WATCH_DESKTOP)
                     ParamIsDesktopWatcher = true;
-
                 else if (param == PARAM_CONTROL_PIPE && i < args.Length)
                     ParamControlPipe = args[i++];
+                else if (param == PARAM_DESKTOP && i < args.Length)
+                    ParamDesktop = args[i++];
                 else if (param == PARAM_START_BROWSER && i < args.Length)
                 {
                     var fileName = args[i++];

@@ -202,9 +202,10 @@ namespace Gosub.OpenViewtopServer
             Task.Run(() => { ProcessRemoteCommunications(mGuiMan, "GUI"); });
 
             mGuiProcess = WtsProcess.StartInSession(
-                sessionId, processType,
-                System.Windows.Forms.Application.ExecutablePath,
-                Program.PARAM_GUI + " " + Program.PARAM_CONTROL_PIPE + " " + pipeName, desktop);
+                sessionId, processType, System.Windows.Forms.Application.ExecutablePath,
+                Program.PARAM_GUI + " " 
+                    + Program.PARAM_CONTROL_PIPE + " " + pipeName 
+                    + " " + Program.PARAM_DESKTOP + " " + desktop, desktop);
 
         }
 

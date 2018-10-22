@@ -16,6 +16,10 @@ namespace Gosub.Viewtop
         public string Nickname = "";
         public bool EnableBeaconBroadcast = true;
 
+        public string NewsFlashVersion = "";
+        public DateTime NewsFlashDate;
+        public bool NewsFlashAccepted;
+
         public static Settings Load()
         {
             try

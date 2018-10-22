@@ -31,6 +31,11 @@ namespace Gosub.OpenViewtopServer
         const int PURGE_PEER_LOST_CONNECTION_MS = 10000;
         const int PROBLEM_PEER_TIME_MS = 3000;
 
+        const string URL_IP_SERVER = "http://ip4.me";
+        const string URL_NEWS_FLASH = "https://gosub.com/OpenViewtop/NewsFlash";
+        const int NEWS_FLASH_CHECK_TIME = 3600; // Check for news flash once an hour
+
+
         // gridRemote columns
         const int GR_COL_NAME = 0;
         const int GR_COL_COMPUTER = 1;
@@ -56,12 +61,15 @@ namespace Gosub.OpenViewtopServer
         int mPortForwardToHttps;
         int mPortHttp;
         int mPortHttps;
-        HttpServer mHttpServer;
 
+        HttpServer mHttpServer;
         ViewtopServer mOvtServer = new ViewtopServer();
         Beacon mBeacon;
         PeerInfo mPeerInfo = new PeerInfo();
         Settings mSettings = new Settings();
+
+        System.Net.Http.HttpClient mHttpClient = new System.Net.Http.HttpClient();
+
 
         // This is only used to track peer indices.  TBD: The beacon could do this for us
         List<string> mPeers = new List<string>();
@@ -94,6 +102,7 @@ namespace Gosub.OpenViewtopServer
             mPortHttp = mDebug ? PORT_HTTP_DEBUG : PORT_HTTP;
             if (mDebug)
             {
+                Program.ParamDesktop = "default";
                 Icon = Properties.Resources.OpenViewtopDebug;
                 ShowInTaskbar = true;
             }
@@ -130,8 +139,15 @@ namespace Gosub.OpenViewtopServer
             timerRunSystem.Interval = 10;
             timerRunSystem.Enabled = true;
 
-            NetworkChange.NetworkAddressChanged += (p1, p2) => { GetPublicIpAddress(); };
-            GetPublicIpAddress();
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12; // Needed for https://gosub.com
+            NetworkChange.NetworkAddressChanged += (p1, p2) => 
+            {
+                UpdatePublicIpAddress();
+                UpdateNewsFlash();
+            };
+            webNewsFlash.DocumentText = "Loading...";
+            UpdatePublicIpAddress();
+            UpdateNewsFlash();
         }
 
         /// <summary>
@@ -448,32 +464,110 @@ namespace Gosub.OpenViewtopServer
             }
         }
 
-        async void GetPublicIpAddress()
+        string Regex(string searchFor, string searchIn)
         {
+            var regex = new System.Text.RegularExpressions.Regex(searchFor);
+            var match = regex.Match(searchIn);
+            if (match.Success)
+                return match.Value;
+            return "";
+        }
+
+        async void UpdatePublicIpAddress()
+        {
+            // Don't bother getting this info when on the lockscreen
+            if (Program.ParamDesktop.ToLower() != "default")
+                return;
+
             try
             {
-                using (var http = new System.Net.Http.HttpClient())
+                var page = await mHttpClient.GetStringAsync(URL_IP_SERVER);
+                var ipAddress = Regex(@"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", page);
+                if (ipAddress != "")
                 {
-                    var page = await http.GetStringAsync("http://ip4.me");
-                    var regex = new System.Text.RegularExpressions.Regex(@"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b");
-                    var match = regex.Match(page);
-                    if (match.Success)
-                    {
-                        Log.Write("GetPublicIpAddress = " + match.Value);
-                        labelPublicIpAddress.Text = "Public IP address: " + match.Value;
-                        mOvtServer.LocalComputerInfo.PublicIp = match.Value;
-                    }
-                    else
-                    {
-                        Log.Write("GetPublicIpAddress: Could not find IP address ");
-                        labelPublicIpAddress.Text = "Could not obtain public IP address";
-                    }
+                    Log.Write("UpdatePublicIpAddress = " + ipAddress);
+                    labelPublicIpAddress.Text = "Public IP address: " + ipAddress;
+                    mOvtServer.LocalComputerInfo.PublicIp = ipAddress;
+                }
+                else
+                {
+                    Log.Write("Could not find IP address");
+                    labelPublicIpAddress.Text = "Could not obtain public IP address";
                 }
             }
             catch (Exception ex)
             {
-                Log.Write("GetPublicIpAddress: Error retrieving IP address: " + ex.Message);
+                Log.Write("Error retrieving IP address: " + ex.Message);
                 labelPublicIpAddress.Text = "Could not obtain public IP address";
+            }
+        }
+
+        async void UpdateNewsFlash()
+        {
+            // Don't bother getting this info when on the lockscreen
+            if (Program.ParamDesktop.ToLower() != "default")
+                return;
+
+            // Check only once per hour after it has been accepted
+            var age = (DateTime.Now - mSettings.NewsFlashDate).TotalSeconds;
+            if (mSettings.NewsFlashAccepted && age >= 0 && age < NEWS_FLASH_CHECK_TIME)
+                return;
+
+            try
+            {
+                var page = await mHttpClient.GetStringAsync(URL_NEWS_FLASH);
+
+                var PAGE_BEGIN = "###page begin###";
+                var PAGE_END = "###page end###";
+                var newsFlash = Regex(PAGE_BEGIN + @"[\s\S]+" + PAGE_END, page).Replace(PAGE_BEGIN, "").Replace(PAGE_END, "");
+                var version = Regex(@"###version\s\d+###", page);
+                if (newsFlash == "")
+                {
+                    Log.Write("Invalid news flash page");
+                    return;
+                }
+
+                // We have a valid news flash, update settings
+                var previousVersion = mSettings.NewsFlashVersion;
+                mSettings.NewsFlashDate = DateTime.Now;
+                mSettings.NewsFlashVersion = version;
+                if (version != previousVersion)
+                    mSettings.NewsFlashAccepted = false;
+                SaveSettings();
+
+                // Show news flash if it has not been accepted
+                webNewsFlash.DocumentText = newsFlash;
+                if (!mSettings.NewsFlashAccepted)
+                {
+                    webNewsFlash.DocumentText = newsFlash;
+                    ShowOnTop();
+                    tabMain.SelectedTab = tabPageNewsFlash;
+                    tabMain.ShowTabs = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Error retrieving news flash: " + ex.Message);
+            }
+        }
+
+        private void buttonAcceptNewsFlash_Click(object sender, EventArgs e)
+        {
+            tabMain.SelectedTab = tabPageHome;
+            tabMain.ShowTabs = true;
+            if (!mSettings.NewsFlashAccepted)
+            {
+                mSettings.NewsFlashAccepted = true;
+                SaveSettings();
+            }
+        }
+
+        private void tabMain_Selected(object sender, TabControlEventArgs e)
+        {
+            if (e.TabPage == tabPageNewsFlash)
+            {
+                mSettings.NewsFlashDate = new DateTime();  // Force update
+                UpdateNewsFlash();
             }
         }
 
@@ -848,5 +942,6 @@ namespace Gosub.OpenViewtopServer
                 MessageBox.Show(this, "ERROR: " + ex.Message, App.Name);
             }
         }
+
     }
 }
