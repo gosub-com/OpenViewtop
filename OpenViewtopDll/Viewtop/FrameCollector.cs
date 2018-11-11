@@ -105,8 +105,8 @@ namespace Gosub.Viewtop
             // Scale the screen down to size
             mIsScaledScreen = true;
             mScale = Math.Min(maxWidth / (double)mFullScreen.Width, maxHeight / (double)mFullScreen.Height);
-            int width = (int)(mScale * mFullScreen.Width);
-            int height = (int)(mScale * mFullScreen.Height);
+            int width = Math.Max(1, (int)(mScale * mFullScreen.Width));
+            int height = Math.Max(1, (int)(mScale * mFullScreen.Height));
             if (mScaledScreen == null || mScaledScreen.Width != width || mScaledScreen.Height != height)
             {
                 if (mScaledScreen != null)

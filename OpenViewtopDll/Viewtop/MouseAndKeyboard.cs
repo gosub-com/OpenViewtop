@@ -64,7 +64,13 @@ namespace Gosub.Viewtop
                                 && p.Y >= 0 && p.Y < Screen.PrimaryScreen.Bounds.Height;
 
             if (mMouseOnScreen)
-                Cursor.Position = p;
+            {
+                // Note: Cursor.Position doesn't create hover effect over start menu
+                int MOUSEEVENTF__MOVE_ABSOLUTE = 0x8001;
+                int scaleX = (int)(p.X*65535.9 / (Screen.PrimaryScreen.Bounds.Width-1));
+                int scaleY = (int)(p.Y*65535.9 / (Screen.PrimaryScreen.Bounds.Height-1));
+                mouse_event(MOUSEEVENTF__MOVE_ABSOLUTE, scaleX, scaleY, 0, IntPtr.Zero);
+            }
         }
 
         void MouseButton(Action action, Button button)

@@ -34,11 +34,13 @@ namespace Gosub.Viewtop
         Clip mClip = new Clip();
         ClipInfo mClipInfo = new ClipInfo();
         MemoryStream mWebsocketRequestStream = new MemoryStream();
+        Options mOptions = new Options();
 
         class RemoteEvents
         {
             public RemoteEvent[] Events { get; set; }
             public RemoteDrawRequest DrawRequest { get; set; }
+            public Options Options;
         }
 
         class RemoteEvent
@@ -62,9 +64,16 @@ namespace Gosub.Viewtop
         class RemoteDrawRequest
         {
             public long Seq;
-            public int MaxWidth;
-            public int MaxHeight;
-            public string Options = "";
+        }
+
+        class Options
+        {
+            public int Width = 1;
+            public int Height = 1;
+            public FrameCompressor.CompressionType Compression = FrameCompressor.CompressionType.SmartPng;
+            public FrameCompressor.OutputType Output = FrameCompressor.OutputType.Normal;
+            public bool FullThrottle = false;
+            public bool FullFrame = false;
         }
 
         class FrameInfo
@@ -91,7 +100,6 @@ namespace Gosub.Viewtop
         {
             public FrameCollector Collector;
             public RemoteDrawRequest DrawRequest;
-            public HttpDict Query;
             public Task Task;
         }
 
@@ -171,6 +179,7 @@ namespace Gosub.Viewtop
                 else
                     await Task.WhenAny(new Task[] { timeout, receiveTask });
 
+                // Fail if too long without any communications from client
                 if (timeout.IsCompleted)
                     break;
 
@@ -186,7 +195,15 @@ namespace Gosub.Viewtop
                     receiveTask = null;
 
                     var request = ViewtopServer.ReadJson<RemoteEvents>(mWebsocketRequestStream);
+
+                    if (request.Options != null)
+                    {
+                        mOptions = request.Options;
+                        mLastScreenHash = 0; // Ask CopyScreen blocking to end early
+                    }
+
                     ProcessRemoteEvents(request.Events);
+
                     if (request.DrawRequest != null)
                         await EnqueueCollectRequestAsync(websocket, request);
                 }
@@ -203,45 +220,11 @@ namespace Gosub.Viewtop
             CollectRequest collectRequest = new CollectRequest();
             collectRequest.Collector = collector;
             collectRequest.DrawRequest = request.DrawRequest;
-            collectRequest.Query = new HttpDict();
-            HttpRequest.ParseQueryString(collectRequest.DrawRequest.Options, collectRequest.Query);
 
             // Copy the screen in a blocking background thread
             collectRequest.Task = Task.Run(() =>
             {
-                if (collectRequest.Query["fullthrottle"] != "")
-                {
-                    // Wait for previous throttle to end
-                    mLastScreenHash = 0;
-                    lock (mLockScreenCopy)
-                        mLastScreenHash = 0;
-
-                    collector.CopyScreen();
-                }
-                else
-                {
-                    // Block until screen changes or timeout
-                    // NOTE: Holding this lock (even without the hash function 
-                    //       is the while loop) incurs a time penalty.  This  
-                    //       code is the big bottleneck causing a slow frame
-                    //       rate.  And mosty of the time is spent in CopyScreen.
-                    lock (mLockScreenCopy)
-                    {
-                        long hash = 0;
-                        var screenCopyTimeout = DateTime.Now;
-                        while ((DateTime.Now - screenCopyTimeout).TotalMilliseconds < WAIT_FOR_SCREEN_CHANGE_TIMEOUT_MS)
-                        {
-                            collector.CopyScreen();
-                            using (var bm = new Bitmap32Bits(collector.Screen, System.Drawing.Imaging.ImageLockMode.ReadOnly))
-                                hash = bm.HashLong(0, 0, bm.Width, bm.Height);
-                            if (hash != mLastScreenHash)
-                                break;
-                            Thread.Sleep(20);
-                        }
-                        mLastScreenHash = hash;
-                    }
-                }
-                collector.ScaleScreen(request.DrawRequest.MaxWidth, request.DrawRequest.MaxHeight);
+                CopyScreen(request, collector, collectRequest);
             });
             mCollectRequests.Enqueue(collectRequest);
         }
@@ -254,12 +237,53 @@ namespace Gosub.Viewtop
             mScreenScale = collectRequest.Collector.Scale;
             mCollectors.Enqueue(collectRequest.Collector);
             var frame = new FrameInfo();
-            GetFrame(collectRequest.Collector, collectRequest.Query, frame);
+            GetFrame(collectRequest.Collector, frame);
             GetClipInfo(frame);
 
             frame.Seq = collectRequest.DrawRequest.Seq; // TBD: Remove?
             await ViewtopServer.WriteJson(websocket, frame);
         }
+
+        /// <summary>
+        /// Copy the screen, block for up to 2 seconds if nothing changes.
+        /// </summary>
+        void CopyScreen(RemoteEvents request, FrameCollector collector, CollectRequest collectRequest)
+        {
+            if (mOptions.FullThrottle)
+            {
+                // Need the lock to wait for previous throttle (if any) to end
+                mLastScreenHash = 0; // Ask CopyScreen blocking to end early
+                lock (mLockScreenCopy)
+                    mLastScreenHash = 0;
+
+                collector.CopyScreen();
+            }
+            else
+            {
+                // Block until screen changes or timeout
+                // NOTE: Holding this lock (even without the hash function 
+                //       in the while loop) incurs a time penalty.  This  
+                //       code is the big bottleneck causing a slow frame
+                //       rate.  And most of the time is spent in CopyScreen.
+                lock (mLockScreenCopy)
+                {
+                    long hash = 0;
+                    var screenCopyTimeout = DateTime.Now;
+                    while ((DateTime.Now - screenCopyTimeout).TotalMilliseconds < WAIT_FOR_SCREEN_CHANGE_TIMEOUT_MS)
+                    {
+                        collector.CopyScreen();
+                        using (var bm = new Bitmap32Bits(collector.Screen, System.Drawing.Imaging.ImageLockMode.ReadOnly))
+                            hash = bm.HashLong(0, 0, bm.Width, bm.Height);
+                        if (hash != mLastScreenHash)
+                            break;
+                        Thread.Sleep(20);
+                    }
+                    mLastScreenHash = hash;
+                }
+            }
+            collector.ScaleScreen(mOptions.Width, mOptions.Height);
+        }
+
 
         private void ProcessRemoteEvents(RemoteEvent []events)
         {
@@ -294,34 +318,12 @@ namespace Gosub.Viewtop
             }
         }
 
-        void GetFrame(FrameCollector collector, HttpDict queryString, FrameInfo frame)
+        void GetFrame(FrameCollector collector, FrameInfo frame)
         {
-            // Full frame analysis
-            mAnalyzer.FullFrame = queryString["fullframe"] != "";
-
-            // Process compression type
-            string compressionType = queryString["compression"].ToLower();
-            if (compressionType == "png")
-                mAnalyzer.Compression = FrameCompressor.CompressionType.Png;
-            else if (compressionType == "jpg")
-                mAnalyzer.Compression = FrameCompressor.CompressionType.Jpg;
-            else
-                mAnalyzer.Compression = FrameCompressor.CompressionType.SmartPng;
-
-            // Process output type
-            string outputType = queryString["output"].ToLower();
-            if (outputType == "fullframejpg")
-                mAnalyzer.Output = FrameCompressor.OutputType.FullFrameJpg;
-            else if (outputType == "fullframepng")
-                mAnalyzer.Output = FrameCompressor.OutputType.FullFramePng;
-            else if (outputType == "compressionmap")
-                mAnalyzer.Output = FrameCompressor.OutputType.CompressionMap;
-            else if (outputType == "hidejpg")
-                mAnalyzer.Output = FrameCompressor.OutputType.HideJpg;
-            else if (outputType == "hidepng")
-                mAnalyzer.Output = FrameCompressor.OutputType.HidePng;
-            else
-                mAnalyzer.Output = FrameCompressor.OutputType.Normal;
+            // Set analyzer options
+            mAnalyzer.FullFrame = mOptions.FullFrame;
+            mAnalyzer.Compression = mOptions.Compression;
+            mAnalyzer.Output = mOptions.Output;
 
             // Compress the frame
             var compressStartTime = DateTime.Now;

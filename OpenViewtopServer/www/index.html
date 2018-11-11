@@ -61,7 +61,7 @@ button::-moz-focus-inner
 </head>
 
 
-<body>
+<body onresize="onDocumentResized()">
 <div id="app">
     <!-- Login form -->
     <div id="remoteLoginPageId">
@@ -124,9 +124,11 @@ button::-moz-focus-inner
         </div>
 
         <!-- Main Screen-->
-        <canvas id="remoteCanvasId" tabindex="1">
-            Canvas not available.  Please upgrade your browser.
-        </canvas>
+        <div id="remoteDivId">
+            <canvas id="remoteCanvasId" tabindex="1">
+                Canvas not available.  Please upgrade your browser.
+            </canvas>
+        </div>
 
         <!-- Stats and options -->
         <table id="remoteOptionsId" style="display:block">
@@ -229,6 +231,7 @@ button::-moz-focus-inner
     var mViewer = null;
     var mRemoteLoginPage = document.getElementById('remoteLoginPageId');
     var mRemoteConnectedPage = document.getElementById('remoteConnectedPageId');
+    var mRemoteDiv = document.getElementById('remoteDivId');
     var mRemoteCanvas = document.getElementById('remoteCanvasId');
     var mRemoteOptions = document.getElementById('remoteOptionsId');
     var mUsername = document.getElementById('usernameId');
@@ -276,34 +279,38 @@ button::-moz-focus-inner
 
     function FullScreen()
     {
-        if (mRemoteCanvas.requestFullscreen)
-            mRemoteCanvas.requestFullscreen();
-        else if (mRemoteCanvas.webkitRequestFullScreen)
-            mRemoteCanvas.webkitRequestFullScreen();
-        else if (mRemoteCanvas.mozRequestFullScreen)
-            mRemoteCanvas.mozRequestFullScreen();
+        if (mRemoteDiv.requestFullscreen)
+            mRemoteDiv.requestFullscreen();
+        else if (mRemoteDiv.webkitRequestFullScreen)
+            mRemoteDiv.webkitRequestFullScreen();
+        else if (mRemoteDiv.mozRequestFullScreen)
+            mRemoteDiv.mozRequestFullScreen();
     }
 
+    function onDocumentResized()
+    {
+        UpdateOptions();
+    }
 
     function UpdateOptions()
     {
-        // Check boxes
-        var options = "&";
+        var WINDOW_BORDER_HEIGHT = 40; // Document margin, scroll bar, menu bar at top, etc.
+        var fullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement;
+        var width = fullscreen ? window.innerWidth : document.body.clientWidth;
+        var height = fullscreen ? window.innerHeight : (window.innerHeight - WINDOW_BORDER_HEIGHT);
+
+        var options = { Width: width, Height: height };
+
         if (app.CheckFullFrame)
-            options += "fullframe=true&";
+            options.FullFrame = true;
         if (app.CheckFullThrottle)
-            options += "fullthrottle=true&"
-
-        // Compression type radio buttons
+            options.FullThrottle = true;
         if (app.RadioCompression != "")
-            options += "compression=" + app.RadioCompression + "&";
- 
-        // Output type radio button
+            options.Compression = app.RadioCompression;
         if (app.RadioOutput != "")
-            options += "output=" + app.RadioOutput + "&";
+            options.Output = app.RadioOutput;
 
-        mViewer.SetDrawOptions(options);
-        console.log("Options=" + options);
+        mViewer.SetOptions(options);
     }
 
 </script>

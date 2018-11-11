@@ -19,7 +19,11 @@ namespace Gosub.Viewtop
         Bitmap32Bits mBackground;
 
         int mBlockSize = 16; // Should be a power of two, should be >= 16
-        float mPngCompressionThreshold = 0.7f;
+
+        // Each block is scored for PNG compressibility. 
+        // Text on a shrunken screen is usually > 50% compressible, 
+        // so use that as the cutoff before switching to JPG.
+        float mPngCompressionThreshold = 0.50f;
 
         int mFrameIndex;
         int mHashCollisions;
@@ -42,7 +46,7 @@ namespace Gosub.Viewtop
         {
             Jpg,
             Png,
-            SmartPng // TBD: Not finished
+            SmartPng
         }
 
         public enum OutputType
@@ -69,7 +73,11 @@ namespace Gosub.Viewtop
             Solid = 1,
             Duplicate = 2,
             Png = 4,
-            Jpg = 8
+            Jpg = 8,            
+            ScoreMask = 0xF0,
+            ScoreShift = 4,
+            LowFrequency = 0x100
+
         }
 
         /// <summary>
@@ -177,7 +185,6 @@ namespace Gosub.Viewtop
                     { BuildBitmap(frameBits, blocks, 
                                   duplicates, Score.Solid | Score.Duplicate | Score.Jpg | Score.Png, 
                                   pngCount == 0 ? ImageFormat.Jpeg : ImageFormat.Png) };
-
             }
             else
             {
@@ -258,16 +265,23 @@ namespace Gosub.Viewtop
                     }
                     // Compression: SmartPNG, JPG, or PNG
                     bool usePng = mCompression == CompressionType.Png;
+                    var score = Score.None;
                     if (mCompression == CompressionType.SmartPng && width >= 4 && height >= 4)
                     {
                         // SmartPng - Check to see if the block would compress well with PNG
                         var rleCount = frame.RleCount(x, y, width, height);
                         var rleTotal = (height-1) * (width-1);
                         var rleCompression = rleCount / (float)rleTotal;
-                        if (rleCompression > mPngCompressionThreshold && !frame.LowFrequency(x, y, width, height))
-                            usePng = true;
+                        score = (Score)((int)(rleCompression * 9.99) << (int)Score.ScoreShift) & Score.ScoreMask;
+                        if (rleCompression > mPngCompressionThreshold)
+                        {
+                            if (!frame.LowFrequency(x, y, width, height))
+                                usePng = true; // Good compression, not low frequency
+                            else
+                                score |= Score.LowFrequency;
+                        }
                     }
-                    blocks.Add(new Block(sourceIndex, usePng ? Score.Png : Score.Jpg));
+                    blocks.Add(new Block(sourceIndex, score | (usePng ? Score.Png : Score.Jpg)));
                     if (usePng)
                         pngCount++;
                     else
@@ -393,6 +407,12 @@ namespace Gosub.Viewtop
                     if (score.HasFlag(Score.Duplicate))
                     {
                         mapGr.DrawRectangle(Pens.Blue, new Rectangle(x + 4, y + 4, mBlockSize - 8, mBlockSize - 8));
+                    }
+                    else if (score.HasFlag(Score.Jpg) || score.HasFlag(Score.Png))
+                    {
+                        mapGr.DrawString(score.HasFlag(Score.LowFrequency) ? "L"
+                            : "" + ((int)(score & Score.ScoreMask) >> (int)Score.ScoreShift),
+                                            SystemFonts.DefaultFont, Brushes.Black, x+4, y+2);
                     }
                 }
             return map;

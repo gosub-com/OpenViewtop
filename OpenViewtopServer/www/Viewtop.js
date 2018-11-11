@@ -16,7 +16,7 @@ function Viewtop()
     var mPassword = null;
     var mViewtop = null;
 
-    var mDrawOptions = "";
+    var mOptions = { Width: 100, Height: 100 };
     var mClipboardButton = { };
 
     var RETRY_TIMEOUT = 500;
@@ -40,12 +40,13 @@ function Viewtop()
         StopInternal();
     }
 
-    this.SetDrawOptions = function(options)
+    this.SetOptions = function (options)
     {
-        mDrawOptions = options;
+        mOptions = options;
         if (mViewtop != null)
-            mViewtop.DrawOptions = mDrawOptions;
+            mViewtop.SetOptions(mOptions);
     }
+
     this.SetClipboardButton = function (button)
     {
         mClipboardButton = button;
@@ -63,7 +64,7 @@ function Viewtop()
             mViewtop.Stop();
 
         mViewtop = new ViewtopInternal(mCanvas);
-        mViewtop.DrawOptions = mDrawOptions;
+        mViewtop.SetOptions(mOptions);
         mViewtop.ClipboardButton = mClipboardButton;
         mViewtop.GotFrameCallback = function ()
         {
@@ -148,12 +149,6 @@ function ViewtopInternal(canvas)
     var mUsername = "";
     var mPassword = "";
 
-    var mMouseMoveTime = 0;
-    var mMouseMoveSendTime = 0;
-    var mMouseX = 0;
-    var mMouseY = 0;
-    var mKeyAndMouseEvents = [];
-
     var mFps = 0;
     var mFpsCounter = 0;
     var mFpsTime = Date.now();
@@ -165,8 +160,8 @@ function ViewtopInternal(canvas)
     var mDrawSequence = 1;
     var mDrawQueue = {};
 
-    // Set draw options (each separated by '&')
-    this.DrawOptions = "";
+    var mOptionsChanged = true;
+    var mOptions = { Width: 100, Height: 100 };
 
     // Start the session
     this.Start = function (username, password)
@@ -195,6 +190,13 @@ function ViewtopInternal(canvas)
     this.GotFrameCallback = function () { }
     this.ClipboardButton = {};
     this.FrameStats = {}
+
+    // Options must include Width and Height properties for canvas size
+    this.SetOptions = function (options)
+    {
+        mOptions = options;
+        mOptionsChanged = true;
+    }
 
     function StopInternal()
     {
@@ -233,47 +235,42 @@ function ViewtopInternal(canvas)
     // Called when the user clicks the canvas
     function OnMouseDown(e)
     {
-        mKeyAndMouseEvents.push(GetMouseEvent("mousedown", e));
+        SendEvent(GetMouseEvent("mousedown", e));
     }
 
     // Called when the user releases the mouse button
     function OnMouseUp(e)
     {
-        mKeyAndMouseEvents.push(GetMouseEvent("mouseup", e));
+        SendEvent(GetMouseEvent("mouseup", e));
     }
+
+    // Called when user moves the mouse over the canvas
+    function OnMouseMove(e)
+    {
+        SendEvent(GetMouseEvent("mousemove", e));
+    }    
 
     // Called when the user scrolls the mouse wheel
     function OnMouseWheel(e)
     {
         var mouseEvent = GetMouseEvent("mousewheel", e);
         mouseEvent.Delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
-        mKeyAndMouseEvents.push(mouseEvent);
+        SendEvent(mouseEvent);
         preventDefault(e);
         return false;
     }
 
     function GetMouseEvent(eventName, e)
     {
-        OnMouseMove(e);
         var mouseEvent = {};
         mouseEvent.Event = eventName;
         mouseEvent.Which = e.which;
-        mouseEvent.Time = mMouseMoveTime;
-        mouseEvent.X = mMouseX;
-        mouseEvent.Y = mMouseY;
+        mouseEvent.Time = Date.now();
+        var r = canvas.getBoundingClientRect();
+        mouseEvent.X = Math.round(e.clientX - r.left);
+        mouseEvent.Y = Math.round(e.clientY - r.top);
         return mouseEvent;
     }
-
-    // Called when user moves the mouse over the canvas
-    function OnMouseMove(e)
-    {
-        // The mouse event will be sent with the next frame of after some
-        // time if the frame is delayed
-        var r = canvas.getBoundingClientRect();
-        mMouseX = Math.round(e.clientX - r.left);
-        mMouseY = Math.round(e.clientY - r.top);
-        mMouseMoveTime = Date.now();
-    }    
 
     function OnKeyDown(e)
     {
@@ -297,8 +294,15 @@ function ViewtopInternal(canvas)
         keyEvent.KeyShift = e.shiftKey;
         keyEvent.KeyCtrl = e.ctrlKey;
         keyEvent.KeyAlt = e.altKey;
-        mKeyAndMouseEvents.push(keyEvent);
+        SendEvent(keyEvent);
         preventDefault(e);
+    }
+
+    function SendEvent(e)
+    {
+        // Send mouse and keyboard events
+        var keyAndMouseEvents = { Event: "Events", Events: [e] };
+        mWebSocket.send(JSON.stringify(keyAndMouseEvents));
     }
 
     // Prevent the canvas default action (e.g. no mouse wheel, etc.)
@@ -311,7 +315,6 @@ function ViewtopInternal(canvas)
 
     function StartSession()
     {
-        mKeyAndMouseEvents = [];
         mDrawQueue = {};
         mDrawSequence = 1;
         mGetSequence = 1;
@@ -374,7 +377,8 @@ function ViewtopInternal(canvas)
     var RTT_TRIGGER_RATIO = 0.5;  // Trigger at middle of RTT
     var RTT_TRIGGER_MIN_MS = 40;  // Trigger a bit before middle of RTT
 
-    function SetRtt(rtt) {
+    function SetRtt(rtt)
+    {
         // Ignore net lag hiccups, which usually come in pairs because of double buffering
         if (rtt > 1.6 * mRtt && mRttSkipsInARow++ < 2)
             return;
@@ -426,6 +430,14 @@ function ViewtopInternal(canvas)
 
         try
         {
+
+            // Send options if they have changed
+            if (mOptionsChanged)
+            {
+                mOptionsChanged = false;
+                mWebSocket.send(JSON.stringify({ Options: mOptions }));
+            }
+
             // Draw frames from the queue
             var drawBuffer = mDrawQueue[mDrawSequence];
             while (drawBuffer)
@@ -445,21 +457,6 @@ function ViewtopInternal(canvas)
             // (i.e. double buffer) to reduce the round trip time latency.  
             if (getsOutstanding == 1 && Date.now() - mGetSendTime > mRtt * RTT_TRIGGER_RATIO - RTT_TRIGGER_MIN_MS)
                 RequestFrameWs();
-
-            // Periodically send mouse move
-            if (mMouseMoveTime > mMouseMoveSendTime && mMouseMoveSendTime < Date.now() + MOUSE_MOVE_TIME_MS)
-            {
-                mKeyAndMouseEvents.push({ Event: "mousemove", Time: mMouseMoveTime, X: mMouseX, Y: mMouseY, });
-                mMouseMoveSendTime = Date.now();
-            }
-
-            // Send mouse and keyboard events
-            if (mKeyAndMouseEvents.length != 0)
-            {
-                var keyAndMouseEvents = { Event: "Events", Events: mKeyAndMouseEvents };
-                mKeyAndMouseEvents = [];
-                mWebSocket.send(JSON.stringify(keyAndMouseEvents));
-            }
         }
         catch (e)
         {
@@ -473,26 +470,11 @@ function ViewtopInternal(canvas)
         var sequence = mGetSequence;
         mGetSequence = mGetSequence + 1;
 
-        // Find canvas size
-        var WINDOW_BORDER_HEIGHT = 40; // Document margin, scroll bar, menu bar at top, etc.
-        var fullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement;
-        var width = fullscreen ? window.innerWidth : document.body.clientWidth;
-        var height = fullscreen ? window.innerHeight : (window.innerHeight - WINDOW_BORDER_HEIGHT);
-
         // Start downloading the draw buffer
         var sendTime = Date.now();
         mGetSendTime = sendTime;
 
-        var event =
-        {
-            DrawRequest:
-            {
-                Seq: sequence,
-                MaxWidth: width,
-                MaxHeight: height,
-                Options: THIS.DrawOptions // Extra options
-            }
-        };
+        var event = { DrawRequest: { Seq: sequence } };
         mWebSocket.send(JSON.stringify(event));
     }
 
@@ -763,19 +745,7 @@ function ViewtopInternal(canvas)
     }
 
     function SetCanvasSize(width, height)
-    {
-        // NOTE: Firefox and Edge scale the canvas to screen size, which destroys
-        //       the mouse scaling and makes it look ugly when enlarged.
-        //       Chrome centers the canvas nicely, so don't change anything
-        var fullscreenButNotChrome = document.fullscreenElement || document.mozFullScreenElement;
-        if (fullscreenButNotChrome)
-        {
-            // TBD: Should draw the image in the center of the canvas
-            // TBD: This doesn't scale correctly in Edge
-            width = window.innerWidth;
-            height = window.innerHeight;
-        }
-
+    {        
         if (mCanvas.width != width)
         {
             mCanvas.width = width;
@@ -785,7 +755,7 @@ function ViewtopInternal(canvas)
         {
             mCanvas.height = height;
             mCanvas.style.height = height + "px";
-        }
+        }        
     }
 
 }
